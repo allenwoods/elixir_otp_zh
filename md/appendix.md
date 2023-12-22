@@ -1,149 +1,92 @@
-xml version='1.0' encoding='utf-8'?
+# 附录A 安装Erlang和Elixir
 
+欢迎来到第0章，或者出版商喜欢称之为附录*A*。我们将讲述如何尽快在您的系统上设置Elixir。我将覆盖Mac OS X、一些Linux发行版和MS Windows。按难易程度排序。
 
+## A.1 获取Erlang
 
-Style A ReadMe
+在安装Elixir之前，我们必须先安装Erlang。在撰写本文时，Erlang的最低版本是18.0。到目前为止，Elixir在跟进新的Erlang版本方面做得非常好。
 
+就像获取Elixir有多种方式一样，Erlang也是如此。如果您可以通过包管理器获取它，那就这样做。否则，最不易出问题的方式（迄今为止！）是前往Erlang Solutions网站[[1]](#uGRexWD7e8DL2GrOrcFocH8)并下载副本。他们为几个Linux发行版（Ubuntu、CentOS、Debian、Fedora甚至是Raspberry Pi的一个版本）、Mac OS X和Windows托管Erlang包。
 
+## A.2 方法1：包管理器/预构建安装程序。
 
+如果您的操作系统自带，您应始终选择通过包管理器安装Elixir。这通常会在最短的时间内让您上手。以下部分概述了一些更受欢迎的操作系统的安装步骤。如果您的系统未列出，请不要担心。通常会有指令在网络空间中流传。
 
+### A.2.1 通过Homebrew和Macports安装Mac OS X
 
-# Appendix A Installing Erlang and Elixir
-
-
-Welcome to Chapter 0, or what publishers like to call, Appendix *A*. We will cover how to get Elixir set up on your system as fast as possible. I will cover Mac OS X, some Linux distributions and MS Windows. It is listed in order of difficulty.
-
-
-A.1          Getting Erlang
-
-
-Before we install Elixir, we must Erlang. At this time of writing, the minimum version of Erlang is 18.0. Elixir has so far been very good at keeping up with new Erlang releases.
-
-
-Just as there are multiple ways of getting Elixir, the same goes to Erlang. If you can get it via a package manager, do that. Otherwise, the least problematic way (by far!) is to head over to the Erlang Solutions site[[1]](#uGRexWD7e8DL2GrOrcFocH8) and download a copy. They host Erlang packages for several Linux distributions (Ubuntu, CentOS, Debian, Fedora and even one of the Raspberry Pi), Mac OS X and Windows.
-
-
-A.2          Method 1: Package Managers / Pre-built installers.
-
-
-If you operating system comes with it, you should always opt to install Elixir via a package manager. That would usually get you up to speed in the shortest time possible. The following sections outline the installation steps for some of the more populate operating systems. If you system is not listed, don’t fret. There are usually instructions floating around cyberspace.
-
-
-A.2.1       Mac OS X via Homebrew and Macports
-
-
-Chances are you would either have the Homebrew or Macports package manager installed. If so, then you are only one step away from a new and shiny Elixir (and Erlang) installation. For Homebrew:
+您可能已经安装了Homebrew或Macports包管理器。如果是这样，那么您距离一个全新而闪亮的Elixir（和Erlang）安装只有一步之遥。对于Homebrew：
 
 `% brew update && brew install elixir`
-For Macports, just do the usual
-`port install`:
+对于Macports，只需执行常规的`port install`：
 
 `% sudo port install elixir`
-Notice that we are not specifying any version numbers. Installing via package managers usually installs the latest *stable* versions. We will cover how to build and install Elixir from source in the later sections.
+注意，我们没有指定任何版本号。通过包管理器安装通常会安装最新的*稳定*版本。我们将在后面的部分讨论如何从源代码构建和安装Elixir。
 
+### A.2.2 Linux（Ubuntu和Fedora）
 
-A.2.2       Linux (Ubuntu and Fedora)
+由于有数十亿个Linux发行版，我将只限于更受欢迎的，即Ubuntu和Fedora。如果是这样，为您安装Elixir将是一行命令的事。
 
+Fedora 17到22（及更高版本）
 
-Since there are a billion Linux distributions out there, I will limit it to the more popular ones, namely Ubuntu and Fedora. If so, installing Elixir would be a one-liner affair for you.
-
-
-Fedora 17 to 22 (and newer)
-
-
-If you are on Fedora 17 and newer (and older than Fedora 21):
+如果您使用的是Fedora 17或更新版本（并且早于Fedora 21）：
 
 `% yum install elixir`
-If you are on Fedora 22 and above:
+如果您使用的是Fedora 22或更高版本：
 
 `% dnf install elixir`
 Ubuntu
 
-
-Ubuntu-flavored distributions need to do slightly more work. You first need to add the Erlang solutions repository:
+Ubuntu风味的发行版需要做更多的工作。您首先需要添加Erlang solutions仓库：
 
 `% wget https://packages.erlang-solutions.com/erlang-solutions_1.0_all.deb && sudo dpkg -i erlang-solutions_1.0_all.deb`
-Next, as all Ubuntu users would already know:
+接下来，所有Ubuntu用户都知道：
 
 `% sudo apt-get update`
-Next, we need to get Erlang (and a bunch of other Erlang related applications):
+接下来，我们需要获取Erlang（和一系列其他Erlang相关应用程序）：
 
 `% sudo apt-get install esl-erlang`
-Finally, we can grab Elixir:
+最后，我们可以获取Elixir：
 
 `% sudo apt-get install elixir`
-A.2.3       MS Windows
+### A.2.3 MS Windows
 
+在Windows上获取Elixir再简单不过了。您需要做的就是安装Elixir网络安装程序[[2]](#unSboXWaDHFFHWhG44f39C3)，您就可以设置好了。
 
-Getting Elixir on Windows couldn’t be easier. All you need to do is to install the Elixir web installer[[2]](#unSboXWaDHFFHWhG44f39C3), and you should be set.
+## A.3 方法2：从头开始编译（仅限Linux/Unix）
 
+所以，您觉得自己很幸运吗？有时，您会迫不及待地想尝试那些令人赞叹的功能。有时候，您可能想直接
 
-A.3          Method 2: Compiling from scratch (Linux/Unix only)
+尝试Elixir，甚至修复一个bug或实现一个新功能。如果是这样，那么这是您要走的路线。
 
+幸运的是，Elixir唯一依赖的是Erlang。如果您已经正确安装了Erlang，那么从源代码编译Elixir通常不会太戏剧性。
 
-So, you are feeling lucky eh? Sometimes there’s just that awesome feature that you cannot wait to play with. There are times where you want to experiment with Elixir directly and maybe fix a bug or implement a new feature. If so, then this is the route you want to take.
-
-
-Happily, the only thing Elixir has a dependency on is Erlang. If you have installed Erlang properly, compiling Elixir from source is usually not very dramatic.
-
-
-In the section, I assume that you are using a Unix/Linux system and have all the necessary build tools installed, such as
-`make`. First, you need to clone Elixir from the official repository:
+在本节中，我假设您正在使用Unix/Linux系统，并且已安装所有必要的构建工具，例如`make`。首先，您需要从官方仓库克隆Elixir：
 
 `% git clone https://github.com/elixir-lang/elixir.git`
-Next, change into the newly created directory:
+接下来，切换到新创建的目录：
 
 `% cd elixir`
-Finally, you can start building the sources:
+最后，您可以开始构建源代码：
 
 `% make clean test`
-It is pretty fascinating to see all the messages go by – it never gets old. Once done, there’s an additional step: You need to add the
-`elixir`
-directory to your
-`PATH`, so that you can access commands like
-`elixir`
-and
-`iex`.
+看到所有消息经过是相当迷人的 - 它永远不会过时。完成后，还有一个额外的步骤：您需要将`elixir`目录添加到您的`PATH`中，以便您可以访问`elixir`和`iex`等命令。
 
+根据您的shell，您可以将`elixir`目录附加到您的`PATH`。例如，如果我要使用`zsh`，那么我会定位到`~/.zshrc`并附加目录：
 
-Depending on your shell, you can append the
-`elixir`
-directory to your
-`PATH`. For example, if I were to use
-`zsh`, then I would locate the
-`~/.zshrc`
-and append the directory:
+`export PATH= ... # 其他PATH在这里 export PATH=$PATH:"~/elixir"`
+在这里，我指定了一个`PATH`是位于我的家目录下的`elixir`目录。
 
-`export PATH= ... # other PATH goes there export PATH=$PATH:"~/elixir"`
-Here, I am specifying that the one of the
-`PATH`s is the
-`elixir`
-directory is located directly under my home directory.
+## A.4 验证您的Elixir安装
 
-
-A.4          Verifying your Elixir installation
-
-
-The last thing to do is checking that Elixir has been installed correctly:
+最后要做的是检查Elixir是否已正确安装：
 
 `% elixir -v`
-If all goes well, you will be greeted with the Erlang/OTP version and the Elixir version:
+如果一切顺利，您将看到Erlang/OTP版本和Elixir版本：
 
 `Erlang/OTP 18 [erts-7.2] [source] [64-bit] [smp:4:4] [async-threads:10] [hipe] [kernel-poll:false] [dtrace]  Elixir 1.3.2`
-What are you waiting for? On to chapter 1!
-
-
-
+您还在等什么？继续第1章吧！
 
 
 [****[1]****](#ulZ3weFoR2csTrcsjKXzrfG) https://www.erlang-solutions.com/resources/download.html
-
-
-
-
 [****[2]****](#uVJT5MoKQk8Ut7nrzybS9dC) https://repo.hex.pm/elixir-websetup.exe
-
-
-
-
 
