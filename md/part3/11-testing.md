@@ -1,13 +1,3 @@
-xml version='1.0' encoding='utf-8'?
-
-
-
-Style A ReadMe
-
-
-
-
-
 # 11      Property-Based and Concurrency Testing
 
 
