@@ -1,1087 +1,843 @@
-# 3   Processes 101
+# 3   进程101
 
+本章内容包括：
 
-This chapter covers:
+- Actor并发模型（Actor Concurrency Model）
+- 创建进程
+- 如何使用进程发送和接收消息
+- 使用进程实现并发
+- 如何使进程相互通信
 
+理解进程的概念是非常重要的，它理所当然地拥有自己的一章。进程是Elixir中并发的基本单位。实际上，Erlang虚拟机（Erlang VM）支持高达1.34亿个进程，这使得所有的CPU都能愉快地运转。知道我充分利用了硬件资源，总是让我有一种温暖、愉悦的感觉。Erlang虚拟机创建的进程与操作系统无关。这些进程更轻量级，创建它们仅需要几微秒。
 
-·      The Actor concurrency model
+我们将开始一个有趣的项目。在本章中，我们将构建一个简单的程序，用于报告特定城市/州/国家的温度。但首先，让我们了解一下actor并发模型。
 
+## 3.1            Actor并发模型
 
-·      Creating processes
+Erlang（因此也包括Elixir）使用Actor并发模型。这意味着：
 
+1.  每个*actor*都是一个*进程*。
+2.  每个进程执行一个*特定任务*。
+3.  要让进程做某事，你需要*向它发送消息*。进程也可以通过*发送回另一个消息*来回复。
+4.  进程可以处理的消息类型特定于进程本身。换句话说，消息是*模式匹配*的。
+5.  除此之外，进程*不与其他进程共享任何信息*。
 
-·      How to send and receive messages using processes
+如果这一切现在看起来还有些模糊，不要担心。如果你做过面向对象编程，你会发现进程在很多方面类似于对象。甚至可以说它是更纯粹的面向对象形式。
 
+这里有一个思考actors的方式。Actors就像人一样。我们通过相互交谈来交流。例如，我的妻子告诉我洗碗。当然，我会通过洗碗来回应——我是个好丈夫。但如果我的妻子告诉我吃蔬菜，她会被忽略——我不会对此作出回应。实际上，我选择只对某些类型的消息做出回应。最后，我不知道她脑海中在想什么，她也不知道我脑海中在想什么。正如你将很快看到的，actor并发模型就像这样——只对某些类型的消息做出回应。
 
-·      Achieving concurrency using processes
+## 3.2            构建天气应用
 
-
-·      How to make processes communicate with each other
-
-
-The concept of processes is one of the most important to understand, and rightly deserves its own chapter. Processes are the fundamental unit of concurrency in Elixir. In fact, the Erlang VM supports up to 134 million[[1]](#upz6AcFmGwE9eU3xCl8oqRD) (!) processes, causing all your CPUs to happily light up. I always get a warm, fuzzy feeling knowing that I am getting my money's worth in hardware. The processes created by the Erlang VM are independent of the operating system. The processes created by the Erlang VM are much more lightweight, and only take mere microseconds to create[[2]](#ufy3ItmzNMRjmsqbWuxUpMA).
-
-
-We are going to embark on a fun project. In this chapter, we will build a simple program that reports the temperature of a given city/state/country. But first, let us learn about the actor concurrency model.
-
-
-3.1            Actor Concurrency Model
-
-
-Erlang (and therefore Elixir) uses the Actor Concurrency Model. This means that:
-
-
-1.  Each *actor* is a *process*.
-
-
-2.  Each process performs a *specific task*.
-
-
-3.  To tell a process to do something, you need to *send it a message*. The process can also reply by *sending back another message*.
-
-
-4.  The kinds of messages the process can act upon are specific to the process itself. In other words, messages are *pattern matched*.
-
-
-5.  Other than that, processes *do not share any information* with other processes.
-
-
-If all this seems fuzzy now, fret not. If you have done any object-oriented programming, you will find that processes resemble objects in many ways. You could even argue that it is a purer form of object-orientation.
-
-
-Here is one way to think about actors. Actors are just like people. We communicate each other by talking to each other. For example, my wife tells me to do the dishes. Of course, I respond by doing the dishes – I’m a good husband. If however, my wife tells me to eat my vegetables, she will get ignored – I won’t respond to that. In effect, I’m choosing to respond to only certain kinds of messages. Finally, I don’t know what goes on inside her head, and neither does she know what goes on inside my head. As you will soon see, the actor concurrency model acts just like that – responding to only certain kinds of messages.
-
-
-3.2            Building a Weather application
-
-
-Conceptually, our application is pretty simple. The first version accepts a single argument containing a location, and it reports the temperature in Celsius. That involves making a HTTP request to an external weather service, and parsing the JSON response to extract the temperature.
-
+从概念上讲，我们的应用程序非常简单。第一个版本接受一个包含位置的单个参数，并报告摄氏温度。这涉及向外部天气服务发出HTTP请求，并解析JSON响应以提取温度。
 
 ![](../Images/3_1.png)  
 
+图3.1 天气actor处理单个请求。
+
+进行单个请求是微不足道的。但如果我们想要同时了解100个城市的温度怎么办？假设每个请求需要1秒钟，我们要等待100秒吗？显然不是！我们将看到如何进行并发请求，以便尽快获得结果。
+
+并发的一个特性是，我们永远不知道响应以何种顺序返回。例如，想象一下，我按字母顺序传入一个城市列表。我收到的回应绝对不保证以相同的顺序排列。
+
+我们如何确保响应的顺序是正确的呢？亲爱的读者，继续阅读下去，因为我们现在就开始在Elixir中的气象冒险。
+
+### 3.2.1 简单版本
+
+我们从一个简单版本开始。也就是说，不会涉及到并发。另一方面，简单版本将包含所有需要发出请求、解析响应和返回结果的逻辑。在这个迭代的结束时，你将学习如何：
+
+- 使用mix安装和使用第三方库
+- 向第三方API发出HTTP请求
+- 使用模式匹配解析JSON响应
+- 看看管道如何促进数据转换
+
+这将是你要处理的第一个非琐碎的程序。但是不用担心，你将在每一步都得到指导。让我们开始吧！
 
 
-Figure 3.1 Weather actor handling a single request.
+#### 创建一个新项目
 
-
-Making a single request is trivial. What happens if we wanted to find out the temperatures of 100 cities at once? Assuming that each request takes 1 second, are we going to wait for 100 seconds? Obviously not! We will see how we can make concurrency requests so that we can get our results as soon as possible.
-
-
-One of the properties of concurrency is that we never know which order the responses come in. For example, imagine that I pass in a list of cities in alphabetical order. The responses I get back are in no way guaranteed to be in the same order.
-
-
-How could we ensure that the responses are in the correct order then? Read on, dear reader, because we begin our meteorological adventures in Elixir right now.
-
-
-3.2.1                      The Naïve Version
-
-
-We start with a naïve version. That is, no concurrency will be involved. On the other hand, the naïve version will contain all of the logic needed to make a request, parse the response, and return the result. By the end of this iteration, you would learn how to:
-
-
-·      Install and make use of third-party libraries using mix
-
-
-·      Make a HTTP request to a third party API
-
-
-·      Parse a JSON response using pattern matching
-
-
-·      See how pipes facilitate data-transformation
-
-
-This will be the first non-trivial program that you will be working through. But no worries though, you will be guided along every step of the way. Let’s begin!
-
-
-Creating a New Project
-
-
-The first order of business is to create a new project, and more importantly, give it a great name. Since I’m the author, I get to choose the name. In listing 3.1, we use
+首要任务是创建一个新项目，更重要的是，给它起一个好名字。既然我是作者，我就来选择名字。在清单3.1中，我们使用
 `mix new <project name>`
-to create a new project
+来创建一个新项目
 
+清单3.1 创建一个新项目
+```bash
+% mix new metex
+* creating README.md
+* creating .gitignore
+* creating mix.exs
+* creating config
+* creating config/config.exs
+* creating lib
+* creating lib/metex.ex
+* creating test
+* creating test/test_helper.exs
+* creating test/metex_test.exs
+Your mix project was created successfully.
+You can use mix to compile it, test it, and more:
 
-Listing 3.1 Creating a new project
+cd metex
+mix test
+% cd metex
+```
 
-`% mix new metex`
-`* creating README.md`
-`* creating .gitignore`
-`* creating mix.exs`
-`* creating config`
-`* creating config/config.exs`
-`* creating lib`
-`* creating lib/metex.ex`
-`* creating test`
-`* creating test/test_helper.exs`
-`* creating test/metex_test.exs`
-`Your mix project was created successfully.`
-`You can use mix to compile it, test it, and more:`
+按照指示，进入`metex`目录。
 
-`cd metex`
-`mix test`
-`% cd metex`
-Follow the instructions and
-`cd`
-into the
-`metex`
-directory.
+#### 安装依赖项
 
+打开`mix.exs`。你会看到以下内容：
 
-Installing the Dependencies
+**清单3.2 默认生成的mix.exs文件。**
 
+```elixir
+defmodule Metex.Mixfile do
+    use Mix.Project
 
-Open
-`mix.exs`. This is what you will see:
+    def project do
+        [app: :metex,
+        version: "0.0.1",
+        elixir: "~> 1.0",
+        deps: deps]
+    end
 
+    def application do
+        [applications: [:logger]]
+    end
 
-Listing 3.2 The default generated mix.exs file.
+    defp deps do
+        []
+    end
+end
+```
+每个由`mix`生成的项目都会包含这个文件。它由两个公共函数组成，`project`和`application`。这个`project`函数基本上是设置我们的项目。更重要的是，它通过调用`deps`私有函数来设置我们项目的依赖项。就目前而言，`deps`是一个空列表 - 暂时的。这个`application`函数用于生成一个应用资源文件。Elixir中的某些依赖项需要以特定的方式启动。像这样的依赖项在此函数中声明。例如，在我们的应用程序启动之前，先启动`logger`应用程序。
 
-`defmodule Metex.Mixfile do`
-`use Mix.Project`
+让我们通过修改`deps`函数来添加两个依赖项，使其看起来像（清单3.3）：
 
-`def project do`
-`[app: :metex,`
-`version: "0.0.1",`
-`elixir: "~> 1.0",`
-`deps: deps]`
-`end`
+**清单3.3 在mix.exs中声明依赖项**
+```elixir
+defp deps do
+    [
+    {:httpoison, "~> 0.9.0"},  #1
+    {:json,      "~> 0.3.0"}   #1
+    ]
+end
+```
+#1 声明依赖项并指定相应的版本号
 
-`def application do`
-`[applications: [:logger]]`
-`end`
+接下来，在`application`函数中添加一个条目：
 
-`defp deps do`
-`[]`
-`end``end`
-Every project generated by
-`mix`
-will contain this file. It consists of two public functions,
-`project`
-and
-`application`. The
-`project`
-function basically sets up our project. More importantly, it sets up our project’s dependencies by invoking the
-`deps`
-private function. As it stands,
-`deps`
-is an empty list – for now. The
-`application`
-function is used to generate an application resource file. Certain dependencies in Elixir require them to be started up in a specific way. Dependencies that are like that are declared within this function. For example, before our application starts, the
-`logger`
-application is started up first.
+```elixir
+def application do
+    [applications: [:logger, :httpoison]]
+end
+```
 
-
-Let’s add two dependencies by modifying the
-`deps`
-function to look like (listing 3.3):
-
-
-Listing 3.3 Declaring dependencies in mix.exs
-
-`defp deps do`
-`[`
-`{:httpoison, "~> 0.9.0"},  #1`
-`{:json,      "~> 0.3.0"}   #1`
-`]``end`
-#1 declaring the dependencies and also specifying the respective version numbers
-
-
-Next, add an entry to the
-`application`
-function:
-
-`def application do`
-`[applications: [:logger, :httpoison]]``end`
-How did I know that I should include
-`:httpoison`, and not say,
-`:json`? Truth is, I don’t. So I always do the next best thing – read the fine manual. Each time I install a library, I first take a look at the README. In
-`:httpoison`’s case, the README clearly states:
-
+我怎么知道我应该包括`:httpoison`，而不是说，`:json`？事实上，我不知道。所以我总是做下一个最好的事情 - 阅读详细的手册。每次我安装一个库，我首先看一下README。在`:httpoison`的情况下，README清楚地说明了：
 
 ![](../Images/3_2.png)  
+图3.2 查看第三方库的README以获取重要的安装指令总是很有帮助的。
 
+#### 依赖项版本号很重要！
 
+注意你的依赖项的版本号。使用错误的版本号可能会导致令人困惑的错误。另一件需要注意的事情是，这些库中的许多都会指定它们与之兼容的Elixir的最小版本。
 
-Figure 3.2 It is always helpful to look at the README of third-party libraries for important installation instructions.
-
-
-
-Dependency version numbers are important!
-
-
-
-Pay attention to the version numbers of your dependencies. Using the wrong version number could result in puzzling errors. Another thing to take note of is that many of these libraries will specify the minimum version of Elixir that it is compatible with.
-
-
-
- 
-
-
-
-Making sure you are in the Metex directory, we can install our dependencies using the
-`mix deps.get`
-command:
+确保你在Metex目录中，我们可以使用`mix deps.get`命令来安装我们的依赖项：
 
 `% mix deps.get`
-Notice that
-`mix`
-helpfully resolves dependencies too. In this case, it brought in two other libraries, hackney and idna (listing 3.4):
+注意到`mix`也有助于解决依赖项。在这种情况下，它引入了另外两个库，hackney和idna（清单3.4）：
 
+清单 3.4 mix 自动解决依赖关系
 
-Listing 3.4 mix resolves dependencies automatically
+```shell
+% mix deps.get
+Running dependency resolution
+* Getting httpoison (Hex package)
+Checking package (http://s3.hex.pm.global.prod.fastly.net/tarballs/httpoison-0.9.0.tar)
+Using locally cached package
+* Getting json (Hex package)
+Checking package (http://s3.hex.pm.global.prod.fastly.net/tarballs/json-0.3.2.tar)
+Using locally cached package
+* Getting hackney (Hex package)
+Checking package (http://s3.hex.pm.global.prod.fastly.net/tarballs/hackney-1.5.7.tar)
+Using locally cached package
+* Getting ssl_verify_fun (Hex package)
+Checking package (http://s3.hex.pm.global.prod.fastly.net/tarballs/ssl_verify_fun-1.1.0.tar)
+Using locally cached package
+* Getting mimerl (Hex package)
+Checking package (http://s3.hex.pm.global.prod.fastly.net/tarballs/mimerl-1.0.2.tar)
+Using locally cached package
+* Getting metrics (Hex package)
+Checking package (http://s3.hex.pm.global.prod.fastly.net/tarballs/metrics-1.0.1.tar)
+Using locally cached package
+* Getting idna (Hex package)
+Checking package (http://s3.hex.pm.global.prod.fastly.net/tarballs/idna-1.2.0.tar)
+Using locally cached package
+* Getting certifi (Hex package)
+Checking package (http://s3.hex.pm.global.prod.fastly.net/tarballs/certifi-0.4.0.tar)
+Using locally cached package
+```
 
-`% mix deps.get`
-`Running dependency resolution`
-`* Getting httpoison (Hex package)`
-`Checking package (http://s3.hex.pm.global.prod.fastly.net/tarballs/httpoison-0.9.0.tar)`
-`Using locally cached package`
-`* Getting json (Hex package)`
-`Checking package (http://s3.hex.pm.global.prod.fastly.net/tarballs/json-0.3.2.tar)`
-`Using locally cached package`
-`* Getting hackney (Hex package)`
-`Checking package (http://s3.hex.pm.global.prod.fastly.net/tarballs/hackney-1.5.7.tar)`
-`Using locally cached package`
-`* Getting ssl_verify_fun (Hex package)`
-`Checking package (http://s3.hex.pm.global.prod.fastly.net/tarballs/ssl_verify_fun-1.1.0.tar)`
-`Using locally cached package`
-`* Getting mimerl (Hex package)`
-`Checking package (http://s3.hex.pm.global.prod.fastly.net/tarballs/mimerl-1.0.2.tar)`
-`Using locally cached package`
-`* Getting metrics (Hex package)`
-`Checking package (http://s3.hex.pm.global.prod.fastly.net/tarballs/metrics-1.0.1.tar)`
-`Using locally cached package`
-`* Getting idna (Hex package)`
-`Checking package (http://s3.hex.pm.global.prod.fastly.net/tarballs/idna-1.2.0.tar)`
-`Using locally cached package`
-`* Getting certifi (Hex package)`
-`Checking package (http://s3.hex.pm.global.prod.fastly.net/tarballs/certifi-0.4.0.tar)``Using locally cached package`
-3.3            The Worker
+3.3 Worker模块
 
-
-Before we get into the implementation for the worker, we need to obtain an API key from the third-party weather service, OpenWeatherMap. Head over to
-`http://openweathermap.org/`
-to create an account. Once done, you will see that your API key has been created for you:
-
+在我们开始实现Worker模块之前，我们需要从第三方天气服务OpenWeatherMap获取一个API密钥。请访问`http://openweathermap.org/`创建一个账户。完成后，你会看到你的API密钥已经为你创建好了：
 
 ![](../Images/3_3.png)  
 
+图 3.3 在OpenWeatherMap创建账户并获取API密钥。
 
-
-Figure 3.3 Creating an account and getting an API key from OpenWeatherMap.
-
-
-Now we can get into the implementation details of the worker. The worker’s job is do fetch the temperature of a given location from OpenWeatherMap, and parse the results. Create
-`worker.ex`
-in the
+现在我们可以深入了解Worker模块的实现细节。Worker模块的工作是从OpenWeatherMap获取给定位置的温度，并解析结果。在
 `lib`
-directory. Here is the entire listing for the worker (listing 3.5):
+目录中创建
+`worker.ex`
+。以下是Worker模块的完整列表（清单3.5）：
 
+清单3.5 worker.ex的完整源码。保存在lib/worker.ex中。
 
-Listing 3.5 The full source of worker.ex. Save this in lib/worker.ex.
+```elixir
+defmodule Metex.Worker do
 
-`defmodule Metex.Worker do`
+    def temperature_of(location) do
+        result = url_for(location) |> HTTPoison.get |> parse_response
+        case result do
+            {:ok, temp} ->
+            "#{location}: #{temp}°C"
+            :error ->
+            "#{location} not found"
+        end
+    end
 
-`def temperature_of(location) do`
-`result = url_for(location) |> HTTPoison.get |> parse_response`
-`case result do`
-`{:ok, temp} ->`
-`"#{location}: #{temp}°C"`
-`:error ->`
-`"#{location} not found"`
-`end`
-`end`
+    defp url_for(location) do
+        location = URI.encode(location)
+        "http://api.openweathermap.org/data/2.5/weather?q=#{location}&appid=#{apikey}"
+    end
 
-`defp url_for(location) do`
-`location = URI.encode(location)`
-`"http://api.openweathermap.org/data/2.5/weather?q=#{location}&appid=#{apikey}"`
-`end`
+    defp parse_response({:ok, %HTTPoison.Response{body: body, status_code: 200}}) do
+        body |> JSON.decode! |> compute_temperature
+    end
 
-`defp parse_response({:ok, %HTTPoison.Response{body: body, status_code: 200}}) do`
-`body |> JSON.decode! |> compute_temperature`
-`end`
+    defp parse_response(_) do
+        :error
+    end
 
-`defp parse_response(_) do`
-`:error`
-`end`
+    defp compute_temperature(json) do
+        try do
+            temp = (json["main"]["temp"] - 273.15) |> Float.round(1)
+            {:ok, temp}
+        rescue
+            _ -> :error
+        end
+    end
 
-`defp compute_temperature(json) do`
-`try do`
-`temp = (json["main"]["temp"] - 273.15) |> Float.round(1)`
-`{:ok, temp}`
-`rescue`
-`_ -> :error`
-`end`
-`end`
+    defp apikey do
+        "APIKEY-GOES-HERE"
+    end
+end
+```
+如果你不完全理解正在发生的事情，不要惊慌。我们将一点一点地浏览程序。现在，让我们看看如何从`iex`运行这个程序。从项目根目录启动`iex`，如下所示：
 
-`defp apikey do`
-`“APIKEY-GOES-HERE”`
-`end`
-`end`
-Do not be alarmed if you don't understand entire what is going on. We will go through the program bit by bit. For now, let's see how we can run this program from
-`iex`. From the project root directory, launch
-`iex`
-like so:
+```shell
+% iex –S mix
+```
 
-`% iex –S mix`
-If it is the first time you are running that command, you will notice a list of dependencies being compiled. You will not see this the next time you run
-`iex`, unless you modify the dependencies. Now, let's find out the temperatures of some of the coldest places in the world (listing 3.6):
+如果这是你第一次运行该命令，你会注意到一系列依赖项正在被编译。下次你运行`iex`时，除非你修改了依赖项，否则你不会看到这个。现在，让我们找出世界上一些最冷的地方的温度（清单3.6）：
 
+清单3.6 工作人员的示例运行。（交互式Elixir）
 
-Listing 3.6 An example run of the worker. (Interactive Elixir)
+```shell
+iex(1)> Metex.Worker.temperature_of "Verkhoyansk, Russia"
+"Verkhoyansk, Russia: -37.3°C"
+```
 
-`iex(1)> Metex.Worker.temperature_of "Verkhoyansk, Russia"`
-`"Verkhoyansk, Russia: -37.3°C"`
-Just for kicks, let's try another:
+只是为了好玩，让我们再试一个：
+```shell
+iex(2)> Metex.Worker.temperature_of "Snag, Yukon, Canada"
+"Snag, Yukon, Canada: -27.6°C"
+```
 
-`iex(2)> Metex.Worker.temperature_of "Snag, Yukon, Canada"`
-`"Snag, Yukon, Canada: -27.6°C"`
-What happens when we give a nonsensical location?
+当我们给出一个无意义的位置时会发生什么？
+```shell
+iex(3)> Metex.Worker.temperature_of "Omicron Persei 8"
+"Omicron Persei 8 not found"
+```
+现在我们已经看到了Worker模块的行动，让我们仔细看看并弄清楚它是如何工作的。我们从清单3.7中的`temperature_of/1`函数开始：
 
-`iex(3)> Metex.Worker.temperature_of "Omicron Persei 8"`
-`"Omicron Persei 8 not found"`
-Now that we have see the worker in action, let's take a closer look and figure out how it works. We begin with the
-`temperature_of/1`
-function in listing 3.7:
+清单3.7 Metex.Worker的核心 - `temperature_of/1`函数
 
+```elixir
+defmodule Metex.Worker do
 
-Listing 3.7 The core of Metex.Worker – temperature\_of/1 function
+def temperature_of(location) do
+    result = url_for(location) |> HTTPoison.get |>  parse_response #1
+    case result do
+        {:ok, temp} ->                          #2
+        "#{location}: #{temp}°C"              #2
+        :error ->                               #3
+        "#{location} not found"               #3
+    end
+end
 
-`defmodule Metex.Worker do`
+# ...end
+```
+- #1 数据转换：从URL到HTTP响应，再到解析该响应
+- #2 成功解析的响应返回温度和位置
+- #3 否则，返回一个错误消息
 
-`def temperature_of(location) do`
-`result = url_for(location) |> HTTPoison.get |>  parse_response #1`
-`case result do`
-`{:ok, temp} ->                          #2`
-`"#{location}: #{temp}°C"              #2`
-`:error ->                               #3`
-`"#{location} not found"               #3`
-`end`
-`end`
+整个函数中最重要的一行是
+```elixir
+result = location |> url_for |> HTTPoison.get |> parse_response
+```
+如果不使用管道操作符，我们将不得不这样编写我们的函数：
+```elixir
+result = parse_response(HTTPoison.get(url_for(location)))
+```
 
-`# ...``end`
-#1 Data transformation: From URL to HTTP response to parsing that response
-
-
-#2 A successfully parsed response returns the temperature and location
-
-
-#3 Otherwise, an error message is returned
-
-
-The most important line in the entire function is
-
-`result = location |> url_for |> HTTPoison.get |> parse_response`
-Without using the pipe operator, we would have to write our function like so:
-
-`result = parse_response(HTTPoison.get(url_for(location)))`
-The
-`location |> url_for`
-constructs the URL that is used to call the weather API. For example, the URL for Singapore would be (substitute
-`<APIKEY>`
-with your own):
-
+`location |> url_for`构造了用于调用天气API的URL。例如，新加坡的URL将是（用你自己的替换`<APIKEY>`）：
 `http://api.openweathermap.org/data/2.5/weather?q=Singapore&appid=<APIKEY>`
-Once we have the URL, we can then make use of httpoison, a HTTP client, to make a GET request:
 
-`location |> url_for |> HTTPoison.get`
-If you tried that URL in your browser, you would have gotten something like this (I've trimmed the JSON for brevity):
+一旦我们有了URL，我们就可以使用httpoison，一个HTTP客户端，来发出GET请求：
+```elixir
+location |> url_for |> HTTPoison.get
+```
+如果你在浏览器中尝试了那个URL，你会得到这样的东西（我已经为了简洁而修剪了JSON）：
 
-`{`
-`...`
-`"main": {`
-`"temp": 299.86,`
-`"temp_min": 299.86,`
-`"temp_max": 299.86,`
-`"pressure": 1028.96,`
-`"sea_level": 1029.64,`
-`"grnd_level": 1028.96,`
-`"humidity": 100`
-`},`
-`...``}`
-Let's take a closer look at the response of the HTTP client. Try this out in iex too. In case you exited iex, remember to use 
+```json
+{
+...
+"main": {
+"temp": 299.86,
+"temp_min": 299.86,
+"temp_max": 299.86,
+"pressure": 1028.96,
+"sea_level": 1029.64,
+"grnd_level": 1028.96,
+"humidity": 100
+},
+...}
+```
+让我们仔细看看HTTP客户端的响应。也可以在iex中试试这个。如果你退出了iex，记得使用
 `iex -S mix`
-so that the dependencies (such as httpoison) are loaded properly.
+这样依赖项（如httpoison）就能正确加载。
 
+我们可以试试新加坡的温度URL（清单3.8）：
 
-We can try out the URL of Singapore's temperature (listing 3.8):
+清单3.8 使用HTTPoison发出GET请求（交互式Elixir）
 
+```shell
+iex(1)> HTTPoison.get "http://api.openweathermap.org/data/2.5/weather?q=Singapore&appid=<APIKEY>"
+```
+看看结果：
 
-Listing 3.8 Using HTTPoison to make a GET request (Interactive Elixir)
+```elixir
+{:ok,
+%HTTPoison.Response{body: "{\"coord\":{\"lon\":103.85,\"lat\":1.29},\"sys\":{\"message\":0.098,\"country\":\"SG\",\"sunrise\":1421795647,\"sunset\":1421839059},\"weather\":[{\"id\":802,\"main\":\"Clouds\",\"description\":\"scattered clouds\",\"icon\":\"03n\"}],\"base\":\"cmc stations\",\"main\":{\"temp\":299.86,\"temp_min\":299.86,\"temp_max\":299.86,\"pressure\":1028.96,\"sea_level\":1029.64,\"grnd_level\":1028.96,\"humidity\":100},\"wind\":{\"speed\":6.6,\"deg\":29.0007},\"clouds\":{\"all\":36},\"dt\":1421852665,\"id\":1880252,\"name\":\"Singapore\",\"cod\":200}\n",
+headers: %{"Access-Control-Allow-Credentials" => "true",
+"Access-Control-Allow-Methods" => "GET, POST",
+"Access-Control-Allow-Origin" => "*",
+"Connection" => "keep-alive",
+"Content-Type" => "application/json; charset=utf-8",
+"Date" => "Wed, 21 Jan 2015 15:59:14 GMT", "Server" => "nginx",
+"Transfer-Encoding" => "chunked", "X-Source" => "redis"},status_code: 200}}
+```
+如果传入一个不存在的页面的URL会怎样？
 
-`iex(1)> HTTPoison.get "http://api.openweathermap.org/data/2.5/weather?q=Singapore&appid=<APIKEY>"`
-Take a look at the results:
+```shell
+iex(2)> HTTPoison.get "http://en.wikipedia.org/phpisawesome"
+```
+这将返回类似这样的东西：
 
-`{:ok,`
-`%HTTPoison.Response{body: "{\"coord\":{\"lon\":103.85,\"lat\":1.29},\"sys\":{\"message\":0.098,\"country\":\"SG\",\"sunrise\":1421795647,\"sunset\":1421839059},\"weather\":[{\"id\":802,\"main\":\"Clouds\",\"description\":\"scattered clouds\",\"icon\":\"03n\"}],\"base\":\"cmc stations\",\"main\":{\"temp\":299.86,\"temp_min\":299.86,\"temp_max\":299.86,\"pressure\":1028.96,\"sea_level\":1029.64,\"grnd_level\":1028.96,\"humidity\":100},\"wind\":{\"speed\":6.6,\"deg\":29.0007},\"clouds\":{\"all\":36},\"dt\":1421852665,\"id\":1880252,\"name\":\"Singapore\",\"cod\":200}\n",`
-`headers: %{"Access-Control-Allow-Credentials" => "true",`
-`"Access-Control-Allow-Methods" => "GET, POST",`
-`"Access-Control-Allow-Origin" => "*",`
-`"Connection" => "keep-alive",`
-`"Content-Type" => "application/json; charset=utf-8",`
-`"Date" => "Wed, 21 Jan 2015 15:59:14 GMT", "Server" => "nginx",`
-`"Transfer-Encoding" => "chunked", "X-Source" => "redis"},``status_code: 200}}`
-What about passing in a URL to a missing page?
+```elixir
+{:ok,
+%HTTPoison.Response{body: "<html>Opps</html>",
+headers: %{"Accept-Ranges" => "bytes", "Age" => "12",
+"Cache-Control" => "s-maxage=2678400, max-age=2678400",
+"Connection" => "keep-alive", "Content-Length" => "2830",
+"Content-Type" => "text/html; charset=utf-8",
+"Date" => "Wed, 21 Jan 2015 16:04:48 GMT",
+"Refresh" => "5; url=http://en.wikipedia.org/wiki/phpisawesome",
+"Server" => "Apache",
+"Set-Cookie" => "GeoIP=SG:Singapore:1.2931:103.8558:v4; Path=/; Domain=.wikipedia.org",
+"Via" => "1.1 varnish, 1.1 varnish, 1.1 varnish",
+"X-Cache" => "cp1053 miss (0), cp4016 hit (1), cp4018 frontend miss (0)",
+"X-Powered-By" => "HHVM/3.3.1",
+"X-Varnish" => "2581642697, 646845726 646839971, 2421023671",
+"X-Wikimedia-Debug" => "prot=http:// serv=en.wikipedia.org loc=/phpisawesome"},status_code: 404}}
+```
+最后，一个荒谬的URL会产生什么呢？
 
-`iex(2)> HTTPoison.get "http://en.wikipedia.org/phpisawesome"`
-This will return something like:
+清单3.9 使用HTTPoison发出无效的GET请求（交互式Elixir）
 
-`{:ok,`
-`%HTTPoison.Response{body: "<html>Opps</html>",`
-`headers: %{"Accept-Ranges" => "bytes", "Age" => "12",`
-`"Cache-Control" => "s-maxage=2678400, max-age=2678400",`
-`"Connection" => "keep-alive", "Content-Length" => "2830",`
-`"Content-Type" => "text/html; charset=utf-8",`
-`"Date" => "Wed, 21 Jan 2015 16:04:48 GMT",`
-`"Refresh" => "5; url=http://en.wikipedia.org/wiki/phpisawesome",`
-`"Server" => "Apache",`
-`"Set-Cookie" => "GeoIP=SG:Singapore:1.2931:103.8558:v4; Path=/; Domain=.wikipedia.org",`
-`"Via" => "1.1 varnish, 1.1 varnish, 1.1 varnish",`
-`"X-Cache" => "cp1053 miss (0), cp4016 hit (1), cp4018 frontend miss (0)",`
-`"X-Powered-By" => "HHVM/3.3.1",`
-`"X-Varnish" => "2581642697, 646845726 646839971, 2421023671",`
-`"X-Wikimedia-Debug" => "prot=http:// serv=en.wikipedia.org loc=/phpisawesome"},``status_code: 404}}`
-And finally, a ridiculous URL yields:
-
-
-Listing 3.9 Using HTTPoison to make an invalid GET request (Interactive Elixir)
-
-`iex(3)> HTTPoison.get "phpisawesome"`
-`{:error, %HTTPoison.Error{id: nil, reason: :nxdomain}}`
-We have just seen at least three variations of the what HTTPoison.get(url) can return. The happy path returns a *pattern* that resembles
+```shell
+iex(3)> HTTPoison.get "phpisawesome"
+{:error, %HTTPoison.Error{id: nil, reason: :nxdomain}}
+```
+我们刚刚看到了HTTPoison.get(url)可以返回的至少三种变体。快乐路径返回一个类似于
 
 `{:ok, %HTTPoison.Response{status_code: 200, body: content}}}`
-The pattern above conveys the following information:
+的模式。上面的模式传达了以下信息：
 
+- 这是一个两元素元组
+- 元组的第一个元素是一个`:ok`原子，后面跟着一个表示响应的结构
+- 响应是`HTTPoison.Response`类型的，包含至少两个字段
+- `status_code`的值是200，表示一个成功的HTTP GET请求
+- body的值在content中被*捕获*
 
-·      This is a two-element tuple
-
-
-·      The first element of the tuple is an
-`:ok`
-atom, followed by a structure that represents the response
-
-
-·      The response is of type
-`HTTPoison.Response`
-that contains at least two fields
-
-
-·      The value of
-`status_code`
-is 200, which represents a successful HTTP GET request
-
-
-·      The value of body is *captured* in content
-
-
-As you can see, pattern matching is incredibly succinct, and a beautiful way to express what you want. Similarly, an error tuple has the following pattern:
+如你所见，模式匹配非常简洁，是表达你想要的东西的一种美丽的方式。同样，错误元组有以下模式：
 
 `{:error, %HTTPoison.Error{reason: reason}}`
-Let's do the same analysis again:
+让我们再做一次相同的分析：
 
+- 这是一个两元素元组
+- 元组的第一个元素是一个`:error`原子，后面跟着一个表示错误的结构
+- 响应是`HTTPoison.Error`类型的，包含至少一个字段，即reason
+- 错误的原因在`reason`中被捕获
 
-·      This is a two-element tuple
+牢记这些，让我们看一下`parse_response/1`函数（清单3.11）：
 
+清单3.11 parse\_response/1函数中的模式匹配
 
-·      The first element of the tuple is an
-`:error`
-atom, followed by a structure that represents the error
+```elixir
+defp parse_response({:ok, %HTTPoison.Response{body: body, status_code: 200}}) do
+    body |> JSON.decode! |> compute_temperature
+end
 
+defp parse_response(_) do
+    :error
+end
+```
+在这里，我们指定了`parse_response/1`的两个版本。第一个版本匹配成功的GET请求，因为我们正在匹配一个类型为`HTTPoison.Response`的响应，并确保`status_code`是200。否则，我们将任何其他类型的响应视为错误。现在让我们仔细看看`parse_response/1`的第一个版本。
 
-·      The response is of type
-`HTTPoison.Error`
-that contains at least one fields, reason
-
-
-·      The reason of the error is captured in
-`reason`
-
-
-With all that in mind, let's take a look at the
-`parse_response/1`
-function (listing 3.11):
-
-
-Listing 3.11 Pattern matching in the parse\_response/1 function
-
-`defp parse_response({:ok, %HTTPoison.Response{body: body, status_code: 200}}) do`
-`body |> JSON.decode! |> compute_temperature`
-`end`
-
-`defp parse_response(_) do`
-`:error``end`
-Here, we specify two versions of
-`parse_response/1.`
-The first version matches a successful GET request, because we are matching a response that is of type
-`HTTPoison.Response,`
-and also making sure that the
-`status_code`
-is 200. Otherwise, we treat any other kind of response as an error. Let's take a closer look now at the first version of
-`parse_response/1.`
-
-`defp parse_response({:ok, %HTTPoison.Response{body: body, status_code: 200}}) do`
-`# ...``end`
-Upon a successful pattern match, the string representation of the JSON is captured in the body variable. In order to turn it into a "real" JSON, we need to decode it:
+```elixir
+defp parse_response({:ok, %HTTPoison.Response{body: body, status_code: 200}}) do
+# ...
+end
+```
+在成功的模式匹配后，JSON的字符串表示被捕获在body变量中。为了将其转换为"真正"的JSON，我们需要解码它：
 
 `body |> JSON.decode!`
-We then pass this JSON into the
-`compute_temperature/1`
-function. Here's the function again:
+然后我们将这个JSON传递给`compute_temperature/1`函数。这是函数的内容：
 
-`defp compute_temperature(json) do`
-`try do`
-`temp = (json["main"]["temp"] - 273.15) |> Float.round(1)`
-`{:ok, temp}`
-`rescue`
-`_ -> :error`
-`end``end`
-We wrap the computation in a
-`try … rescue … end`
-block. We attempt to retrieve the temperaure from the given JSON and then perform some arithmetic. At any of these points an error could occur. If it does, we want the return result to be an
-`:error atom.`
-Otherwise, a two-element tuple containing
-`:ok`
-as the first element and the temperature is returned. Having return values of different “shapes” is very useful because code that calls this function for example can easily pattern match on both success and failure cases. You will see many more cases where we can exploit opportunities for pattern matching in the following chapters.
+```elixir
+defp compute_temperature(json) do
+    try do
+        temp = (json["main"]["temp"] - 273.15) |> Float.round(1)
+        {:ok, temp}
+    rescue
+        _ -> :error
+    end
+end
+```
+我们在`try … rescue … end`块中包装计算。我们试图从给定的JSON中检索温度，然后进行一些算术运算。在这些点中的任何一个都可能发生错误。如果发生错误，我们希望返回结果是一个`:error`原子。否则，返回一个包含`:ok`作为第一个元素和温度的两元素元组。具有不同“形状”的返回值非常有用，因为例如调用此函数的代码可以轻松地在成功和失败的情况下进行模式匹配。在接下来的章节中，你将看到更多我们可以利用模式匹配的机会。
 
+在这里，我们减去273.15，因为API以开尔文提供结果。我们还将温度四舍五入到小数点后一位。
 
-Here, we are subtracting 273.15 because the API provides the results in Kelvins. We also round off the temperature to one decimal place.
+如果HTTP GET响应与第一个模式不匹配，会发生什么呢？这就是第二个`parse_response/1`函数的工作：
 
+清单3.11 这个版本的parse\_response/1匹配任何消息。
 
-What happens if the HTTP GET response doesn't match the first pattern? That's the job of the second
-`parse_response/1`
-function:
+```elixir
+defp parse_response(_) do
+    :error
+end
+```
+在这里，除了成功的响应之外，任何其他响应都被视为错误。基本上就是这样！你现在应该对工作人员的工作方式有了更好的理解。让我们学习一下在Elixir中如何创建进程。
 
+3.4 创建进程以实现并发
 
-Listing 3.11 This version of parse\_response/1 matches any message.
+假设我们有一份我们想要获取温度的城市列表：
 
-`defp parse_response(_) do`
-`:error``end`
-Here, any other response other than a successful one is treated as an error. That is basically it! You should now have a better understanding of how to the worker works. Let's learn about how processes are created in Elixir.
+清单3.12 创建城市列表（交互式Elixir）
 
+```shell
+iex> cities = ["Singapore", "Monaco", "Vatican City", "Hong Kong", "Macau"]
+```
+接下来，我们一次向工作人员发送每个请求：
 
-3.4            Creating Processes for Concurrency
+清单3.13 一次请求查找城市的温度（交互式Elixir）
 
-
-Let's imagine we have a list of cities we want to get temperatures of:
-
-
-Listing 3.12 Creating a list of cities (Interactive Elixir)
-
-`iex> cities = ["Singapore", "Monaco", "Vatican City", "Hong Kong", "Macau"]`
-Next, we send each request to the worker, one at a time:
-
-
-Listing 3.13 Making a request to find the temperature of a city, one at a time (Interactive Elixir)
-
-`iex(2)> cities |> Enum.map(fn city ->`
-`Metex.Worker.temperature_of(city)``end)`
-This results in:
+```elixir
+iex(2)> cities |> Enum.map(fn city ->
+Metex.Worker.temperature_of(city)end)
+```
+结果是：
 
 `["Singapore: 27.5°C", "Monaco: 7.3°C", "Vatican City: 10.9°C", "Hong Kong: 18.1°C", "Macau: 19.5°C"]`
-The problem with this approach is that it is *wasteful*. As the size of the list grows, so will the time needed to wait for all the responses to complete. The only time the next request will be processed is when the one before it has completed. We can do better.
-
+这种方法的问题是它是*浪费的*。随着列表大小的增长，等待所有响应完成所需的时间也会增长。只有在前一个请求完成后，下一个请求才会被处理。我们可以做得更好。
 
 ![](../Images/3_2a.png)  
 
+图3.2 没有并发，下一个请求将不得不等待前一个请求完成。这非常低效。
 
+需要意识到的一个重要事情是，*每个请求并不依赖于其他请求*。换句话说，我们可以将每个对`Metex.Worker.temperature_of/1`的调用打包到一个进程中。让我们教工作人员如何响应消息。首先，将`loop/0`函数添加到`lib/worker.ex:`
 
-Figure 3.2 Without concurrency, the next request will have to wait for the previous one to complete. This is very inefficient.
+清单3.14  将loop/0函数添加到工作人员中，以便它可以响应消息。
 
+```elixir
+defmodule Metex.Worker do
 
-One important thing to realise is that *each request does not depend on the other*. In other words, we can package each call to
-`Metex.Worker.temperature_of/1`
-into a process. Let's teach our worker how to respond to messages. First, add the
-`loop/0`
-function into
-`lib/worker.ex:`
+    def loop do
+        receive do
+            {sender_pid, location} ->
+            send(sender_pid, {:ok, temperature_of(location)})
+            _ ->
+            IO.puts "don't know how to process this message"
+        end
+        loop
+    end
 
+    defp temperature_of(location) do
+    # ...
+    end
 
-Listing 3.14  Adding the loop/0 function into the worker so that it can respond to messages.
+# ...end
+```
+在我们深入了解细节之前，让我们先玩玩这个。如果你已经打开了iex，你可以*重新加载*模块：
 
-`defmodule Metex.Worker do`
+```shell
+iex> r(Metex.Worker)
+```
+否则，你可以再次运行`iex -S mix`。首先，我们创建一个运行工作人员的循环函数的进程：
 
-`def loop do`
-`receive do`
-`{sender_pid, location} ->`
-`send(sender_pid, {:ok, temperature_of(location)})`
-`_ ->`
-`IO.puts "don't know how to process this message"`
-`end`
-`loop`
-`end`
+```shell
+iex> pid = spawn(Metex.Worker, :loop, [])
+```
+内置的spawn函数创建一个进程。spawn有两个版本。第一个版本将一个函数作为参数，第二个版本将一个给定的模块和函数传递给定的参数。两个版本都返回一个*进程id*，或者说*pid*，作为结果。
 
-`defp temperature_of(location) do`
-`# ...`
-`end`
+3.4.1 接收消息
 
-`# ...``end`
-Before we go into the details, let's play around with this. If you already have iex opened, you can *reload* the module:
+进程ID（pid）是对进程的*引用*，就像在面向对象编程中初始化一个对象会给你一个对该对象的*引用*一样。有了pid，我们就可以向进程发送*消息*。进程可以接收的消息类型在接收块中定义（清单3.15）：
 
-`iex> r(Metex.Worker)`
-Otherwise, you can run
-`iex -S mix`
-again. First, we create a process that runs the worker's loop function:
+清单3.15 进程可以接收的消息类型在接收块中定义。
 
-`iex> pid = spawn(Metex.Worker, :loop, [])`
-The built-in spawn function creates a process. There are two variations of spawn. The first version takes in a single function as a parameter, the second one takes in a given module and function passing the given arguments. Both versions return a *process id*, or *pid*, as the result.
+```elixir
+receive do
+{sender_pid, location} ->
+send(sender_pid, {:ok, temperature_of(location)})
+_ ->
+IO.puts "don't know how to process this message"
+end
+```
+消息是从*上到下*进行模式匹配的。在这种情况下，如果传入的消息是一个两元素元组，那么将执行主体。任何其他消息都将在第二个模式中进行模式匹配。
 
+如果我们将上述代码的函数子句交换顺序，会发生什么呢（清单3.16）：
 
-3.4.1                      Receiving Messages
+清单3.16 模式匹配是从上到下进行的。交换接收到的消息的顺序很重要！
 
+```elixir
+receive do
+_ ->                                  #1
+IO.puts "don't know how to process this message"
+{sender_pid, location} ->
+send(sender_pid, {:ok, temperature_of(location)})
+end
+```
+#1 这匹配任何消息！
 
-A pid is a *reference* to a process, much like how in object-oriented programming the result on initialising an object gives you a *reference* to that object. With the pid, we can send the process *messages*. The kinds of messages that the process can receive is defined within the receive block (listing 3.15):
-
-
-Listing 3.15 The kinds of messages a process can receive is defined in the receive block.
-
-`receive do`
-`{sender_pid, location} ->`
-`send(sender_pid, {:ok, temperature_of(location)})`
-`_ ->`
-`IO.puts "don't know how to process this message"``end`
-Messages are pattern-matched from *top to bottom*. In this case, if the incoming message is a two-element tuple, then the body will be executed. Any other message will be pattern-matched in the second pattern.
-
-
-What happens if were were to write the above piece of code with the function clauses swapped (listing 3.16):
-
-
-Listing 3.16 Pattern matching occurs top-to-bottom.  Swapping the order of messages received matters!
-
-`receive do`
-`_ ->                                  #1`
-`IO.puts "don't know how to process this message"`
-`{sender_pid, location} ->`
-`send(sender_pid, {:ok, temperature_of(location)})``end`
-#1 This matches any message!
-
-
-If you try to run this, Elixir helpfully warns you:
+如果你试图运行这个，Elixir会有帮助地警告你：
 
 `lib/worker.ex:7: warning: this clause cannot match because a previous clause at line 5 always matches`
-In other words, the
-`{sender_pid, location}`
-will *never* be matched because the match-all operator (“`_”`), as it name suggests, will *greedily* match every single message that comes its way.
+换句话说，`{sender_pid, location}`将*永远不会*被匹配，因为匹配所有操作符（“`_”`），顾名思义，将*贪婪地*匹配它所遇到的每一条消息。
 
+一般来说，将匹配所有的情况作为最后一个要匹配的消息是一种好的做法。这是因为未匹配的消息会保留在邮箱中。因此，通过反复向一个不处理未匹配消息的进程发送消息，可能会使虚拟机耗尽内存。
 
-In general, it is good practice to have the match-all case as the last message to be matched. This is because unmatched messages in kept in the mailbox. Therefore, it is possible to make the VM run out of memory by repeatedly sending messages to a process that doesn't handle unmatched messages.
+### 3.4.2 发送消息
 
+消息是使用内置的`send/2`函数发送的。第一个参数是你想要发送消息的进程的pid。第二个参数是实际的消息。
 
-3.4.2                      Sending Messages
+清单3.17 工作人员可以接收的消息的模式
 
+```elixir
+receive do
+{sender_pid, location} ->               #1
+send(sender_pid, {:ok, temperature_of(location)})
+end
+```
+#1 进入的消息包含发送者pid和位置
 
-Messages are sent using the built-in
-`send/2`
-function. The first argument is the pid of the process you want to send the message to. The second argument is the actual message.
+在这里，我们将请求的结果发送给`sender_pid`。我们从哪里得到`sender_pid`呢？当然是从进入的消息中！如果你仔细看，我们期望进入的消息由发送者的pid和位置组成。将发送者的pid（或者说任何进程id）放入就像在信封背面放一个*返回地址*一样。它为收件人提供了一个回复的途径。
 
+让我们发送一个消息给我们之前创建的进程（清单3.18）：
 
-Listing 3.17 The pattern of the message that the worker can receive
+清单3.18 使用send/2向进程发送消息（交互式Elixir）
 
-`receive do`
-`{sender_pid, location} ->               #1`
-`send(sender_pid, {:ok, temperature_of(location)})``end`
-#1 The incoming message contains the sender pid and location
-
-
-Here, we are sending the result of the request to
-`sender_pid`. Where do we get
-`sender_pid`? The incoming message, of course! If you look closely, we are expecting that the incoming message consists of the sender's pid and the location. Putting in the sender's pid (or any process id for that matter) is like putting a *return address* at the back of the envelope. It provides the recipient an avenue to reply to.       
-
-
-Let's send the process that we have created earlier a message (listing 3.18):
-
-
-Listing 3.18 Sending the process a message using send/2 (Interactive Elixir)
-
-`iex> send(pid, {self, "Singapore"})`
-Results in
+```shell
+iex> send(pid, {self, "Singapore"})
+```
+结果是
 
 `{#PID<0.125.0>, "Singapore"}`
-Wait, besides the return result, nothing else happened! Let's break it down a little. The first thing to note is that the result of
-`send/2`
-is always the *message*. The second thing is that
-`send/2`
-always returns immediately. In order words,
-`send/2`
-is like fire-and-forget. So that explains how we got the result. But what about *why* we are not getting back any results?
+等等，除了返回结果，什么都没有发生！让我们稍微分解一下。首先要注意的是，`send/2`的结果总是*消息*。第二件事是，`send/2`总是立即返回。换句话说，`send/2`就像是发射-忘记。所以这就解释了我们是如何得到结果的。但是*为什么*我们没有得到任何结果呢？
 
+我们将什么作为发送者pid传入消息有效载荷？`self`！`self`到底是什么？`self`是调用进程的pid。在这种情况下，它是`iex`shell会话的pid。我们实际上是告诉工作人员将所有的回复发送到shell会话。要从shell会话中获取回复，我们可以使用内置的`flush/0`函数（清单3.19）：
 
-What did we pass into the message payload as the sender pid?
-`self`! What is
-`self`
-exactly?
-`self`
-is the pid of the calling process. In this case, it is the pid of the
-`iex`
-shell session.  We are effectively telling the worker to send all replies to the shell session. To get back responses from the shell session, we can use the built-in
-`flush/0`
-function (listing 3.19):
+清单3.19 使用flush/0检索发送到shell进程的消息（交互式Elixir）
 
+```shell
+iex> flush
+"Singapore: 27.5°C"
+:ok
+```
+`flush/0`清除了发送到shell的所有消息并打印它们出来。因此，下次你再做一次`flush`，你只会得到`:ok`原子。让我们看看这个在实践中是如何工作的。再次，我们有一个城市列表：
 
-Listing 3.19 Retrieving messages sent to the shell process using flush/0 (Interactive Elixir)
+```shell
+iex> cities = ["Singapore", "Monaco", "Vatican City", "Hong Kong", "Macau"]
+```
+然后，我们遍历每个城市。在每次迭代中，我们生成一个新的工作人员。使用新工作人员的pid，我们发送一个包含返回地址（`iex`shell会话）和城市的两元素元组作为消息（清单3.20）：
 
-`iex> flush`
-`"Singapore: 27.5°C"``:ok`
-`flush/0`
-clears out all the messages that were sent to the shell and prints them out. Therefore, the next time you do another
-`flush`, you will only get the
-`:ok`
-atom. Let's see this in action. Once again, we have a list of cities:
+清单3.20 对于每个城市，生成一个进程来查找该城市的温度（交互式Elixir）
 
-`iex> cities = ["Singapore", "Monaco", "Vatican City", "Hong Kong", "Macau"]`
-Then, we iterate through each city. In each iteration, we spawn a new worker. Using the pid of the new worker, we send it a two-element tuple as a message containing the return address (the
-`iex`
-shell session) and the city (listing 3.20):
+```elixir
+iex> cities |> Enum.each(fn city ->
+pid = spawn(Metex.Worker, :loop, [])
+send(pid, {self, city})
+end)
+```
+现在，让我们刷新消息：
 
-
-Listing 3.20 For each city, spawn a process to find out the temperature of that city (Interactive Elixir)
-
-`iex> cities |> Enum.each(fn city ->`
-`pid = spawn(Metex.Worker, :loop, [])`
-`send(pid, {self, city})``end)`
-Now, let's flush the messages:
-
-`iex> flush`
-`{:ok, "Hong Kong: 17.8°C"}`
-`{:ok, "Singapore: 27.5°C"}`
-`{:ok, "Macau: 18.6°C"}`
-`{:ok, "Monaco: 6.7°C"}`
-`{:ok, "Vatican City: 11.8°C"}``:ok`
-Awesome! We finally got back our result. Notice that the result are *not* in any order. That's because which response that completed first could send the reply back to the sender as soon as it was done. If you run the iteration again, you would most probably get the results in a different order.
-
+```shell
+iex> flush
+{:ok, "Hong Kong: 17.8°C"}
+{:ok, "Singapore: 27.5°C"}
+{:ok, "Macau: 18.6°C"}
+{:ok, "Monaco: 6.7°C"}
+{:ok, "Vatican City: 11.8°C"}
+:ok
+```
+太棒了！我们终于得到了我们的结果。注意结果*不是*按任何顺序排列的。这是因为哪个响应先完成就可以在完成后尽快将回复发送回发送者。如果你再次运行迭代，你可能会得到不同顺序的结果。
 
 ![](../Images/3_4.png)  
 
+图3.4 当进程不必等待彼此时，发送消息的顺序不能保证。
 
-
-Figure 3.4 The order of sent messages in not guaranteed when processes do not have to wait for each other.
-
-
-Take a look at the
+再看一下
 `loop`
-function again. The first thing to notice is that it is recursive – it calls itself after a message has been processed:
+函数。首先要注意的是，它是递归的 - 在处理完一条消息后，它会调用自己：
 
-`def loop do`
-`receive do`
-`{sender_pid, location} ->`
-`send(sender_pid, {:ok, temperature_of(location)})`
-`_ ->`
-`send(sender_pid, "Unknown message")`
-`end`
-`loop # 1``end`
-#1 Recursive call to loop
+```elixir
+def loop do
+  receive do
+    {sender_pid, location} ->
+      send(sender_pid, {:ok, temperature_of(location)})
+    _ ->
+      send(sender_pid, "Unknown message")
+  end
+  loop # 1
+end
+```
+#1 对loop的递归调用
 
+你可能会想，为什么我们需要循环。一般来说，进程应该能够处理多于一条的消息。如果我们省略了递归调用，那么进程在处理完第一条（也是唯一的）消息后，就会退出，并被垃圾回收。我们通常希望我们的进程能够处理多于一个的进程！因此，我们需要对消息处理逻辑进行递归调用。
 
-You might be wondering why we needed the loop in the first place. In general, the process should be able to handle more than one message. If we left the recursive call out, the moment the process handles that first (and only) message, it will exit, and get garbage collected. We usually want our processes to be able to handle more than one process! Therefore, we need a recursive call to the message handling logic.
+3.5      用另一个Actor收集和操作结果
 
+将结果发送到shell会话对于查看工作人员发送的消息很有用，但仅此而已。如果我们想要操作结果，比如说，对它们进行排序，我们需要找到另一种方法。我们可以创建另一个actor来收集结果，而不是使用shell会话作为发送者。
 
-3.5      Collecting and Manipulating Results with Another Actor
+这意味着这个actor必须跟踪*期望的*消息数量。换句话说，actor必须保持状态。我们该如何做呢？
 
+首先，让我们设置actor。创建一个名为`lib/coordinator.ex`的文件，并按照清单3.21中的内容填充它：
 
-Sending results to the shell session is great for seeing what messages are sent by the workers, but nothing more. If we want to manipulate the results, say, sorting them, we need to find another way. Instead of using the shell session as the sender, we can create another actor to collect the results.
+清单3.21 coordinator.ex的完整源代码。将此保存在lib/coordinator.ex中。
 
+```elixir
+defmodule Metex.Coordinator do
 
-This means that this actor must keep track of *how many* messages are expected. In other words, the actor must keep state. How could we do that?
+def loop(results \\ [], results_expected) do
+  receive do
+    {:ok, result} ->
+      new_results = [result|results]
+      if results_expected == Enum.count(new_results) do
+        send self, :exit
+      end
+      loop(new_results, results_expected)
+    :exit ->
+      IO.puts(results |> Enum.sort |> Enum.join(", "))
+    _ ->
+      loop(results, results_expected)
+  end
+end
+end
+```
+让我们看看我们如何将协调器和工作人员一起使用。打开`lib/metex.ex`，并输入以下内容（清单3.22）：
 
+清单3.22 在lib/metex.ex中创建一个协调器进程和工作人员进程的函数。
 
-Let's set up the actor first. Create a file called
-`lib/coordinator.ex`
-and fill it up as in listing 3.21:
+```elixir
+defmodule Metex do
 
+def temperatures_of(cities) do
+  coordinator_pid =
+    spawn(Metex.Coordinator, :loop, [[], Enum.count(cities)]) #1
 
-Listing 3.21 The full source of coordinator.ex. Save this in lib/coordinator.ex.
+  cities |> Enum.each(fn city ->                               #2
+    worker_pid = spawn(Metex.Worker, :loop, [])                #3
+    send worker_pid, {coordinator_pid, city}                   #4
+  end)
+end
+end
+```
+#1 创建一个协调器进程
+#2 遍历每个城市
+#3 创建一个工作进程并执行其循环函数
+#4 向工作人员发送一条包含协调器进程pid和城市的消息
 
-`defmodule Metex.Coordinator do`
-
-`def loop(results \\ [], results_expected) do`
-`receive do`
-`{:ok, result} ->`
-`new_results = [result|results]`
-`if results_expected == Enum.count(new_results) do`
-`send self, :exit`
-`end`
-`loop(new_results, results_expected)`
-`:exit ->`
-`IO.puts(results |> Enum.sort |> Enum.join(", "))`
-`_ ->`
-`loop(results, results_expected)`
-`end`
-`end`
-`end`
-Let's see how we can use the coordinator together with the workers. Open up
-`lib/metex.ex`, and enter the following (listing 3.22):
-
-
-Listing 3.22 A function to spawn a coordinator process and worker processes in lib/metex.ex.
-
-`defmodule Metex do`
-
-`def temperatures_of(cities) do`
-`coordinator_pid =`
-`spawn(Metex.Coordinator, :loop, [[], Enum.count(cities)]) #1`
-
-`cities |> Enum.each(fn city ->                   #2`
-`worker_pid = spawn(Metex.Worker, :loop, [])    #3`
-`send worker_pid, {coordinator_pid, city}       #4`
-`end)`
-`end`
-`end`
-#1 Create a coordinator process
-
-
-#2 Iterate through each city
-
-
-#3 Create a worker process and execute its loop function
-
-
-#4 Send the worker a message containing the coordinator process pid and city
-
-
-We can then find out the temperatures of cities by first creating a list of cities
+然后，我们可以通过首先创建一个城市列表来找出城市的温度
 
 `iex> cities = ["Singapore", "Monaco", "Vatican City", "Hong Kong", "Macau"]`
-Followed by calling Metex.temperatures\_of/1:
+然后调用Metex.temperatures\_of/1：
 
 `iex> Metex.temperatures_of(cities)`
-The result is as expected:
+结果如预期：
 
 `Hong Kong: 17.8°C, Macau: 18.4°C, Monaco: 8.8°C, Singapore: 28.6°C, Vatican City: 8.5°C`
-Here is how
-`Metex.temperatures\_of/1`
-work. Firstly, we create a coordinator process. The loop function of the coordinator process expects two arguments, the current collected results and the total number of results it expects. Therefore, when we first create the coordinator, we initialize it with an initially empty result list , and the number of cities:
+这就是`Metex.temperatures\_of/1`的工作原理。首先，我们创建一个协调器进程。协调器进程的循环函数期望两个参数，当前收集的结果和它期望的结果总数。因此，当我们首次创建协调器时，我们用一个初始为空的结果列表和城市数量初始化它：
 
 `iex> coordinator_pid = spawn(Metex.Coordinator, :loop, [[], Enum.count(cities)])`
-Now we have the coordinator process waiting for messages from the worker. Given a list of cities, we iterate through each city, create a worker then send the worker a message containing the coordinator pid and the city.
+现在我们有了等待来自工作人员消息的协调器进程。给定一个城市列表，我们遍历每个城市，创建一个工作人员，然后向工作人员发送一条包含协调器pid和城市的消息。
 
+清单3.23 为每个城市生成工作进程，并将协调器进程设置为工作人员消息的接收者。（交互式Elixir）
 
-Listing 3.23 Spawn worker processes for each city, and set the coordinator process as the recipient of messages from the workers. (Interactive Elixir)
-
-`iex> cities |> Enum.each(fn city ->`
-`worker_pid = spawn(Metex.Worker, :loop, [])`
-`send worker_pid, {coordinator_pid, city}``end)`
-Once all five workers have completed the requests, the coordinator will dutifully report the result:
+```elixir
+iex> cities |> Enum.each(fn city ->
+  worker_pid = spawn(Metex.Worker, :loop, [])
+  send worker_pid, {coordinator_pid, city}
+end)
+```
+一旦所有五个工作人员完成了请求，协调器将尽职尽责地报告结果：
 
 `Hong Kong: 16.6°C, Macau: 18.3°C, Monaco: 8.1°C, Singapore: 26.7°C, Vatican City: 9.9°C`
-Success! Notice that the results are sorted in lexicographical order. Now it is time to dig into the coordinator process and find out how it works.
+成功！注意结果是按字典顺序排序的。现在是时候深入研究协调器进程，找出它是如何工作的了。
 
-
-What kinds of messages can the coordinator receive from the worker? Inspecting the
-`receive do ... end`
-block, we can conclude there are at least two kinds we are especially interested in:
-
+协调器可以从工作人员那里接收哪些消息？检查`receive do ... end`块，我们可以得出至少有两种我们特别感兴趣的消息：
 
 `·`
 `{:ok, result}`
-
 
 `·`
 `:exit`
 
+其他类型的消息将被忽略。让我们更详细地检查每种消息。
 
-Other kinds of messages are ignored. Let's examine each kind of message in closer detail.
+### 3.5.1                      {:ok, result} - 顺利进行的消息 - {:ok, result}
 
+这是我们期望从工作人员那里收到的"顺利进行的"消息，如果没有出错的话（清单3.24）：
 
-3.5.1                      {:ok, result} – The Happy Path Message - {:ok, result}
+清单3.24 顺利进行的消息
 
+```elixir
+def loop(results \\ [], results_expected) do
+  receive do
+    {:ok, result} ->
+      new_results = [result|results]                 #1
+      if results_expected == Enum.count(new_results) do #2
+        send self, :exit                             #3
+      end
+      loop(new_results, results_expected)            #4
 
-This is the "happy path" message that we expect from a worker if nothing went wrong (listing 3.24):
+    # ... 其他模式省略 ...
 
+  end
+end
+```
+#1 将结果添加到当前结果列表中
 
-Listing 3.24 The happy path message
+#2 检查是否已收集到所有结果
 
-`def loop(results \\ [], results_expected) do`
-`receive do`
-`{:ok, result} ->`
-`new_results = [result|results]                    #1`
-`if results_expected == Enum.count(new_results) do #2`
-`send self, :exit                                #3`
-`end`
-`loop(new_results, results_expected)               #4`
+#3 向协调器发送退出消息
 
-`# ... other patterns omitted ...`
+#4 使用新的结果循环。注意，results\_expected保持不变
 
-`end``end`
-#1 Add result to current list of results
-
-
-#2 Check if all results have been collected
-
-
-#3 Send the coordinator the exit message
-
-
-#4 Loop with new results. Notice that results\_expected remains unchanged
-
-
-When the coordinator receives a message that fits the
-`{:ok, result}`
-pattern, it first adds the result into the current list of results.
-
+当协调器收到符合`{:ok, result}`模式的消息时，它首先将结果添加到当前的结果列表中。
 
 ![](../Images/3_5.png)  
 
+图3.5 当第一个结果进入时，actor将结果保存在列表中。
 
-
-Figure 3.5 When the first result comes in, the actor saves the result in a list.
-
-
-Next, we check if the coordinator has received the correct number of results expected. Let’s assume not. In this case, the loop function calls itself again. Notice the arguments to the recursive call to loop. This time we pass in
-`new\_results`, while
-`results\_expected`
-remains unchanged.
-
+接下来，我们检查协调器是否已经收到了预期的正确结果数量。假设没有。在这种情况下，循环函数再次调用自己。注意到循环的递归调用的参数。这次我们传入`new\_results`，而`results\_expected`保持不变。
 
 ![](../Images/3_6.png)  
 
+图3.6 当协调器收到下一条消息时，它再次将其存储在结果列表中。
 
+这就是actor中保持状态的方式。参数的*副本*被修改，然后传递到循环函数中，在下一次对自身的函数调用中，它将可用。
 
-Figure 3.6 When the coordinator receives the next message, it stores it in the results list again.
+### 3.5.2                      :exit - 中断信号消息
 
-
-This is how state is kept in an actor. The *copy* of the arguments are modified, and then passed along into the loop function, where it would be available during the next function call to itself.
-
-
-3.5.2                      :exit – The Poison Pill Message
-
-
-When the coordinator has received all the messages, it must find a way to tell itself to stop, and report the results if necessary. A simple way to do this is via a "poison pill" message (listing 3.25).
-
+当协调器收到所有的消息时，它必须找到一种方法来告诉自己停止，并在必要时报告结果。一种简单的方法是通过一个"中断信号"消息（清单3.25）。
 
 ![](../Images/3_7.png)  
 
+图3.7 当协调器收到:exit消息时，它按字母顺序返回结果，然后退出。
 
+注意，`:exit`消息本身并不特殊。你可以称之为`:kill`、`:self\_destruct`或`:kaboom`。
 
-Figure 3.7 When the coordinator receives the :exit message, it returns the results in alphabetical order, and then exits.
+当协调器收到`:exit`消息时，它会打印出用逗号分隔的字典顺序的结果。由于我们希望协调器退出，我们不需要调用`loop`函数（清单3.25）。
 
+清单3.25 中断信号消息
 
-Note that the
-`:exit`
-message  by itself is not special. You can call it
-`:kill`,
-`:self\_destruct`, or
-`:kaboom`.
+```elixir
+def loop(results \\ [], results_expected) do
+  receive do
+    # ... 其他模式省略 ...
 
+    :exit ->
+      IO.puts(results |> Enum.sort |> Enum.join(", ")) #1
 
-When the coordinator receives an
-`:exit`
-message, it prints out the results lexicographically that are separated by commas. Since we want to coordinator to exit, we do not have to call the
-`loop`
-function (listing 3.25).
+    # ... 其他模式省略 ...
+  end
+end
+```
+#1 按字典顺序打印结果，用逗号分隔
 
+### 3.5.3                      其他消息
 
-Listing 3.25 The poison pill message
+最后，我们必须处理协调器可能接收到的任何其他类型的消息。我们使用`\_`操作符捕获这些不需要的消息。最后，我们需要记住再次循环，尽管我们保持参数不变（清单3.26）：
 
-`def loop(results \\ [], results_expected) do`
-`receive do`
-`# ... other pattern omitted ...`
+清单3.26 匹配所有其他消息
 
-`:exit ->`
-`IO.puts(results |> Enum.sort |> Enum.join(", ")) #1`
+```elixir
+def loop(results \\ [], results_expected) do
+  receive do
+    # ... 其他模式省略 ...
+    _ ->                                     #1
+      loop(results, results_expected)        #2
+  end
+end
+```
+#1 匹配所有其他类型的消息
 
-`# ... other pattern omitted ...`
-`end``end`
-#1 Print the results lexicographically, separated by commas
+#2 再次循环，保持参数不变
 
+### 3.5.4                      宏观视角
 
-3.5.3                      Any Other Messages
+恭喜你 - 你刚刚用Elixir编写了你的第一个并发程序！你使用了多个进程来并发地执行计算。在执行计算时，没有一个进程需要等待其他进程，除了协调器进程。
 
+需要强调的一个重要点是，这里没有共享内存。进程内状态的改变只能通过发送消息来实现。这与线程不同，因为线程是共享内存的。这意味着多个线程可以修改同一块内存，这是并发错误（和头痛）的无尽之源。
 
-Finally, we must take care of any other types of messages that the coordinator can potentially receive. We capture these unwanted messages with the
-`\_`
-operator. Finally, we need to remember to loop again, although we leave the arguments unmodified (listing 3.26):
+在设计你自己的并发程序时，决定进程应该接收和发送的消息类型，以及进程之间的交互是很重要的。在我们的示例程序中，我决定使用`{:ok, result}`和`:exit`作为协调器进程的消息，使用`{sender_pid, location}`作为工作进程的消息。我发现，画出各个进程之间的交互以及正在发送和接收的消息是非常有帮助的。抵制直接跳入编码的诱惑，花几分钟时间进行草图绘制。这样做将节省你数小时的挠头和咒骂的时间！
 
+## 3.6 练习
 
-Listing 3.26 Matching all other messages
+进程是Elixir的基础。只有通过运行和实验代码，你才能更好地理解。
 
-`def loop(results \\ [], results_expected) do`
-`receive do`
-`# ... other patterns omitted ...`
-`_ ->                                #1`
-`loop(results, results_expected)   #2`
-`end``end`
-#1 Match every other kind of messages
+1.   阅读`send`和`receive`的文档。对于`send`，找出你可以发送消息的有效目标。对于`receive`，研究文档提供的示例。
 
+2.  阅读`Process`的文档。
 
-#2 Loop again, leaving the arguments unmodified
+3.  编写一个程序，生成两个进程。第一个进程，在收到`ping`消息时，回复一个`pong`消息。第二个进程，在收到`pong`消息时，向发送者回复一个`ping`消息。
 
+## 3.7 总结
 
-3.5.4                      The Bigger Picture
+在本章中，我们介绍了进程这个至关重要的主题。你被介绍到了Actor并发模型。通过示例应用，我们学习了如何：
 
+·      创建进程
 
-Congratulations – You have just written you first concurrent program in Elixir! You used multiple processes to perform computations concurrently. None of the processes had to wait for each other while performing the computation, except for the coordinator process.
+·      使用进程发送和接收消息
 
+·      可以使用多个进程实现并发
 
-An important point to reinforce is that there is no shared memory. The only way a change of state could occur within a process is when a message is sent to it. This is different from threads, because threads share memory. This means that multiple threads can modify the same memory, an endless source of concurrency bugs (and headaches).
+·      工作进程的消息可以由另一个协调器进程收集和操作
 
-
-When designing your own concurrent programs, it is important to decide the types of messages that the processes should receive and send, along with the interations between processes. In our example program, I decided to use
-`{:ok, result}`
-and
-`:exit`
-for the coordinator process, and
-`{sender_pid, location}`
-for the worker process. I have personally found it very helpful to sketch out the interactions between the various processes along with the messages that are being sent and received. Resist the temptation to dive right into coding and spend a few minutes sketching. Doing this will save you hours of head-scratching and cursing!
-
-
-3.6            Exercises
-
-
-Processes are fundamental to Elixir. You will gain a better understanding only by running and experimenting with the code.
-
-
-1.   Read the documentation for
-`send`
-and
-`receive`. For
-`send`, find out what are valid destinations that you can send messages to. For
-`receive`, study the example that the documentation provides.
-
-
-2.  Read the documentation for
-`Process`.
-
-
-3.  Write a program that spawns two processes. The first process, on receiving a
-`ping`
-message, replies with a
-`pong`
-message. The second process, on receiving a
-`pong`, message replies with a
-`ping`
-message to the sender.
-
-
-3.7            Summary
-
-
-In this chapter, we covered the all-important topic of processes. You were introduced to the Actor concurrency model. Through the example application, we’ve learnt how to:
-
-
-·      Create processes
-
-
-·      Send and receive messages using processes
-
-
-·      Concurrency can be achieved using multiple processes
-
-
-·      Messages from worker processes can collected and manipulated using another coordinator process
-
-
-You have just been given a taste of concurrent programming in Elixir! Have fun doing the exercises, and be sure to give your brain a little break. See you in the next chapter, where we will learn about the *secret sauce* of Elixir – OTP!
-
-
-
+你刚刚尝试了Elixir的并发编程！在做练习的时候玩得开心，一定要给你的大脑稍微休息一下。我们下一章见，我们将学习Elixir的*秘密酱料* - OTP！
 
 
 [****[1]****](#uawOqHhyhtkQ2B699h55Lj4) http://www.erlang.org/doc/man/erl.html#max\_processes
-
-
-
-
 [****[2]****](#uaLcTH2WZVUhi5sgnh6hkO7) http://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.116.1969&rep=rep1&type=pdf
 
 
