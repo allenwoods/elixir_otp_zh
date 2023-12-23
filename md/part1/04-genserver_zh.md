@@ -1,1368 +1,826 @@
-# 4   Writing Server Applications with GenServer
+# 4   使用GenServer编写服务器应用程序
 
+本章内容包括：
 
-This chapter covers: 
+- OTP及其使用原因
+- OTP行为
+- 重写Metex以使用GenServer OTP行为
+- 结构化你的代码以使用GenServer
+- 使用回调处理同步和异步请求
+- 管理服务器状态
+- 干净地停止服务器
+- 为GenServer注册一个名称
 
+在本章中，我们首先学习OTP。OTP最初代表Open Telecom Platform。这个名字是由Ericsson的营销天才们创造的（我希望他们不会读到这个！），现在只被称为它的首字母缩写。部分原因是因为这个命名过于短视。OTP提供的工具并不特定于电信领域。然而，这个名字还是被保留下来了，无论好坏。这只是证明了命名确实是计算机科学中最难的问题之一。
 
-·      OTP and why you should use it
+我们将学习OTP到底是什么。然后我们将看一下驱动其创建的一些动机。我们还将看到OTP的*行为(Behaviours)*如何帮助我们构建应用程序，减少样板代码，大幅减少潜在的并发错误，并依赖于经过数十年艰苦经验积累的代码。
 
+一旦我们理解了OTP的核心原则，我们将学习一个最重要和最常见的OTP行为 - GenServer。GenServer是Generic Server的简称，GenServer行为是客户端/服务器功能的抽象。我们将把在第3章中构建的温度报告应用程序`Metex`，转变成一个GenServer。到那时，你将对如何实现你自己的GenServers有一个坚实的理解。
 
-·      OTP behaviours
+## 4.1 OTP到底是什么？
 
+OTP有时被称为一个框架，但这并没有给它足够的赞誉。相反，你应该把OTP看作是一个完整的并发编程开发环境。为了证明我的观点，这里有一个OTP附带的功能的非详尽的清单：
 
-·      Rewriting Metex to use the GenServer OTP Behaviour
+- Erlang解释器和编译器
+- Erlang标准库
+- Dialyzer，一个静态分析工具
+- Mnesia，一个分布式数据库
+- Erlang Term Storage (ETS)，一个内存数据库
+- 一个调试器
+- 一个事件跟踪器
+- 一个发布管理工具
 
+我们将在书中的后续部分遇到OTP的各种部分。现在，我们将把注意力转向OTP行为。
 
-·      Structuring your code to use GenServer
+## 4.2 OTP行为
 
+将OTP行为视为进程的设计模式。这些行为源自经过实战测试的生产代码，并且一直在不断完善。在你的代码中使用OTP行为可以为你提供代码的通用部分，让你只需要实现特定的业务逻辑。
 
-·      Handling synchronous and asynchronous requests using callbacks
+以GenServer为例。GenServer为你提供了开箱即用的客户端/服务器功能。特别是，它提供了所有服务器通用的功能。这些通用功能是什么呢？它们包括：
 
+- 启动服务器进程
+- 在服务器中维护状态
+- 处理请求并发送回应
+- 停止服务器进程
 
-·      Managing server state
+GenServer已经覆盖了通用部分。而你则需要提供业务逻辑。你需要提供的特定逻辑包括：
 
+- 你想用来初始化服务器的状态
+- 服务器处理的消息类型
+- 何时回复客户端
+- 回复客户端的消息内容
+- 终止后需要清理的资源
 
-·      Cleanly stopping the server
+还有其他的好处。例如，当你正在构建你的服务器应用时，你如何知道你已经覆盖了所有可能出现的必要边缘情况和并发问题呢？此外，理解服务器逻辑的不同实现也不会有趣。
 
+以`Metex`示例中的`worker.ex`为例。在我不使用GenServer行为的程序中，我通常将主循环命名为`loop`。然而，没有人会阻止任何人将其命名为`await`、`recur`甚至是像`while_1_true`这样荒谬的名字。使用GenServer行为可以让我（更可能是那些对命名有困难的开发者）免于考虑这些琐事。
 
-·      Registering the GenServer with a name
+## 4.2.1 不同的OTP行为
 
+下表列出了开箱即用的常见OTP行为。OTP并不限制你只使用这四种。事实上，你可以实现你自己的行为。然而，理解如何正确使用默认的行为是至关重要的，因为它们覆盖了你可能遇到的大多数用例。
 
-In this chapter, we begin by learning about OTP. OTP originally stood for Open Telecom Platform. Coined by the marketing geniuses over at Ericsson (I hope they don't read this!), it is now only being referred to by its acronym. Part of the reason is because the naming is myopic. The tools provided by OTP are in no way specific to the telecommunications domain. Nonetheless, the naming stuck, for better or worse. This just goes to show that naming is indeed one of the hardest problems in Computer Science.  
+表4.1 OTP行为及其提供的功能
 
-
-We will learn what exactly OTP is. Then we will look at some of the motivations that drove its creation. We will also see how OTP *behaviours* help us build applications that reduce boilerplate code, reduce potential concurrency bugs drastically and rely on code that has benefited from the decades of hard-earned experience. 
-
-
-Once we have understood the core principles of OTP, we will then learn about one of the most important and common OTP behaviours – the GenServer. Short for Generic Server, the GenServer behaviour is an abstraction of client/server functionality. We will take
-`Metex`, the temperature reporting application that we built in Chapter 3, and turn it into a GenServer. By then, you would have a firm grasp of how to implement your own GenServers.
-
-
-4.1           What is OTP Exactly?
-
-
-OTP is sometimes referred to as a framework, but that is not giving it due credit. Instead, think of OTP as a complete development environment for concurrent programming. To prove my point, here's a non-exhaustive laundry list of the features that come with OTP:
-
-
-·      The Erlang interpreter and compiler
-
-
-·      Erlang standard libraries
-
-
-·      Dialyzer, a static analysis tool
-
-
-·      Mnesia, a distributed database
-
-
-·      Erlang Term Storage (ETS), an in-memory database
-
-
-·      A debugger,
-
-
-·      An event tracer
-
-
-·      A release management tool 
-
-
-We will encounter various pieces of OTP as we progress along the book. For now, we will turn out attention to OTP behaviours.
-
-
-4.2           OTP Behaviours 
-
-
-Think of OTP behaviours as design patterns for processes. These behaviours emerged from battle-tested production code, and have been refined continuously ever since. Using OTP behaviours in your code helps you by providing you the generic pieces of your code for free, leaving you to implement the specific pieces of business logic.  
-
-
-Take GenServer for example. GenServer provides you with client/server functionality out of the box. In particular, it provides functionality that in common to all servers. What are these common features?  They are:
-
-
-·      Spawning the server process
-
-
-·      Maintaining state within the server
-
-
-·      Handling requests and sending responses back
-
-
-·      Stopping the server process  
-
-
-GenServer has got the generic side covered. You on the other hand, have to provide the business logic. The specific logic that you need to provide include: 
-
-
-·      The state that you want to initialize the server with
-
-
-·      The kinds of messages the server handles
-
-
-·      When to reply to the client
-
-
-·      What message to reply to the client
-
-
-·      What resources to clean up after termination 
-
-
-There are also other benefits. When you are building your server application for example, how would you know that you have covered all the necessary edge cases and concurrency issues that might crop up? Furthermore, it would not be fun to have to understand different implementations of server logic.
-
-
-Take
-`worker.ex`
-in the
-`Metex`
-example. In my programs that don't use the GenServer behaviour, I usually name the main loop, well
-`loop`. However, there is not stopping anyone from naming it
-`await`,
-`recur`
-or even something ridiculous like
-`while_1_true`. Using the GenServer behaviour releases me (and more likely the naming-challenged developer) from the burden of having to think about these trivialities.
-
-
-4.1.1        The Different OTP Behaviours 
-
-
-The following table lists the common OTP behaviours that is provided out of the box. OTP doesn’t limit you to these four. In fact, you can implement your own behaviours. However, it is imperative to understand how to use the default ones well, because they cover most of the use cases you would ever encounter.
-
-
-Table 4.1 OTP Behaviours and the functionality they provide
-
-
-
-
-|  |  |
+| 行为 | 描述 |
 | --- | --- |
-| 
-Behaviour
- | 
-Description
- |
-| GenServer | A behaviour module for implementing the server of a client-server relation. |
-| GenEvent | A behaviour module for implementing event handling functionality |
-| Supervisor | A behaviour module for implementing supervision functionality |
-| Application | A module for working with applications and defining application callbacks. |
+| GenServer | 用于实现客户端-服务器关系的服务器的行为模块。 |
+| GenEvent | 用于实现事件处理功能的行为模块 |
+| Supervisor | 用于实现监督功能的行为模块 |
+| Application | 用于处理应用程序和定义应用程序回调的模块。 |
 
+为了使事情更具体，我们可以亲自看看这些行为是如何组合在一起的。为此，我们需要OTP免费提供的Observer工具。启动`iex`，并启动Observer：
 
-To make things more concrete, we can see for ourselves how these behaviours fit together. For this, we need the Observer tool, provided by OTP for free. Fire up
-`iex`, and start Observer:
+清单 4. 1 启动Observer工具
 
+```elixir
+% iex
+iex(1)> :observer.start
+:ok
+```
 
-Listing 4. 1 Launching the Observer tool
-
-`% iex`
-`iex(1)> :observer.start``:ok`
-When the window pops up, click on the “Applications” tab. You should see something like this:
-
+当窗口弹出时，点击“Applications”选项卡。你应该会看到类似这样的内容：
 
 ![](../Images/4_2.png)  
 
+清单 4. 2 Observer工具显示Kernel应用的监督器树
 
+在左侧列中是一个OTP *应用*的列表，这些应用在启动iex时已经启动。我们将在下一章中介绍应用。现在，你可以将它们视为自包含的程序。点击左列中的每个选项都会显示该应用的*监督器*层次结构。例如，上图显示了`kernel`应用的监督器层次结构，这是在`elixir`应用启动之前就启动的第一个应用。
 
-Listing 4. 2 The Observer tool displaying the supervisor tree of the Kernel application
+如果你仔细观察，你会注意到监督器后面都附加了一个`sup`。例如，`kernel_sup`监督了其他十个进程。这些进程可能是GenServers（例如`code_server`和`file_server`）或者其他的监督器（例如`kernel_safe_sup`和`standard_error_sup`）。
 
+像GenServer和GenEvent这样的行为是*工作进程* - 它们包含了大部分的业务逻辑，并完成了大部分的繁重工作。随着我们的进展，你将更多地了解它们。监督器正如它们听起来的那样：它们照顾下面的进程，并在发生不好的事情时采取行动。让我们通过从最常用的OTP行为 - GenServer开始，使一切变得更具体。
 
-On the left column is a list of OTP *applications* that were started when iex was started. We will cover applications in the next chapter. For now, you can think of them as self-contained programs. Clicking on each option in the left column reveals the *supervisor* hierarchy for that application. For example, the above diagram shows the supervisor hierarchy for the
-`kernel`
-application, which is the very first application started, even before the
-`elixir`
-application starts.
+## 4.3 动手实践OTP：重新审视Metex
 
+以GenServer为例，我们将实现一个OTP行为。我们将重新实现第3章中的天气应用`Metex`。只是这次，我们将使用GenServer行为来实现它。
 
-If you look closely, you will notice that the supervisors have a
-`sup`
-appended*.*
-`kernel_sup`
-for example supervises ten other processes. These processes could be GenServers (`code_server`
-and
-`file_server`
-for example) or even other Supervisors (`kernel_safe_sup`
-and
-`standard_error_sup`).
+如果你需要复习一下，`Metex`会报告给定位置（如城市名称）的摄氏温度。这是通过对第三方天气服务进行HTTP调用来完成的。我们将添加其他的功能，以说明各种GenServer概念，如保持状态和进程注册。例如，我们将跟踪请求的有效位置的频率。
 
+我们将跳过第3章中讨论的功能部分。换句话说，如果所有这些对你来说都是新的，那么现在将是开始阅读第3章的最佳时机！一旦我们完成了应用程序，我们将退一步，比较第3章和第4章的方法。让我们开始吧！
 
-Behaviours like the GenServer and GenEvent are the *workers* – they contain most of the business logic, and do most of the heavy lifting. You will learn more about them as we progress along. Supervisors at exactly what they sound: They take care of processes under them and take action when something bad happens. Let’s make everything more concrete by starting with the most frequently used OTP behaviour – GenServer.
+### 4.3.1 创建一个新项目
 
+像往常一样，创建一个新项目。记住先把你旧版本的`Metex`放在另一个目录中！
 
-4.3           Hands On OTP: Revisiting Metex 
+```elixir
+% mix new metex
+```
 
+在`mix.exs`中，填写`application`和`deps`，如下所示：
 
-Using GenServer as an example we will go about implementing an OTP behaviour. We will re-implement
-`Metex`, our weather application in Chapter 3. Only this time, we will implement it using the GenServer behaviour. 
+清单 4. 3 项目设置
 
+```elixir
+defmodule Metex.Mixfile do
+    use Mix.Project
 
-In case you need a refresher,
-`Metex`
-reports the temperature in Celsius given a location such as the name of a city. This is done through a HTTP call to a third party weather service. We will add other bells and whistles to illustrate the various GenServer concepts such as keeping state and process registration. For example, we will be tracking the frequency of valid locations requested.
+# ...
 
+    def application do
+        [applications: [:logger, :httpoison]]
+    end
 
-Pieces of functionality that was discussed in Chapter 3 will be skipped. In order words, if all this sounds new to you, now would be the perfect time to start on Chapter 3! Once we have completed the application, we will then take a step back and compare the approaches in Chapter 3 and Chapter 4. Let’s get started!
+    defp deps do
+        [
+        {:httpoison, "~> 0.9.0"},
+        {:json,      "~> 0.3.0"}
+        ]
+    end
+end
+```
 
+然后我们需要获取我们的依赖项。在终端中，使用`mix deps.get`命令来做到这一点。
 
-4.1.2        Creating a New Project
+### 4.3.2 使Worker符合GenServer
 
+我们从应用程序的主力，工作进程开始。在`lib/worker.ex`中，我们首先声明一个新的模块，并指定我们希望使用GenServer行为：
 
-As usual, create a new project. Remember to place your old version of
-`Metex`
-in another directory first!
+清单 4. 4 使用GenServer行为
 
-`% mix new metex`
-In
-`mix.exs`, fill up the
-`application`
-and
-`deps`
-like so:
+```elixir
+defmodule Metex.Worker do
+    use GenServer #1
+end
+```
+#1 自动定义GenServer所需的所有回调
 
+只要有`use GenServer`，Elixir就会自动定义GenServer所需的所有回调。这意味着你可以挑选和选择你想要实现的回调。这些回调到底是什么呢？很高兴你问到这个问题。
 
-Listing 4. 3 Project setup
+### 4.3.3 回调
 
-`defmodule Metex.Mixfile do`
-`use Mix.Project`
+有六个回调函数会自动为你定义。以下是完整的列表：
 
-`# ...`
+- `init(args)`
+- `handle_call(msg, {from, ref}, state)`
+- `handle_cast(msg, state)`
+- `handle_info(msg, state)`
+- `terminate(reason, state)`
+- `code_change(old_vsn, state, extra)`
 
-`def application do`
-`[applications: [:logger, :httpoison]]`
-`end`
+在我们进一步讨论之前，有必要提醒自己，我们*为什么*要费心让工作进程成为一个GenServer，尤其是（如你很快就会看到的）你需要学习各种回调函数和正确的返回值。
 
-`defp deps do`
-`[`
-`{:httpoison, "~> 0.9.0"},`
-`{:json,      "~> 0.3.0"}`
-`]`
-`end`
-`end`
-We then need to get our dependencies. In the terminal, use the
-`mix deps.get`
-command to do just that.
+使用OTP的最大好处是，当你编写自己的客户端-服务器程序或监督器时，你*不必*担心的所有事情。例如，你如何编写一个函数来进行异步请求？同步请求呢？GenServer行为为这个确切的用例提供了`handle_cast/2`和`handle_call/3`。
 
+你的进程必须处理不同类型的消息。随着消息类型的增多，手动编写的进程可能会变得笨重。再次，GenServer的各种`handle_*`函数提供了一种整洁的方式来指定你想要处理的不同类型的消息。接收消息只是一半的问题。你还需要一种处理回复的方式。正如预期的那样，回调函数会帮你解决问题（双关语！），因为它使得访问发送进程的pid变得方便。
 
-4.1.3        Making The Worker GenServer Compliant
+现在让我们考虑一下状态管理。每个进程都需要一种初始化状态的方式。它也需要一种在进程终止之前可能进行一些清理的方式。GenServer的`init/1`和`terminate/2`就是你需要的回调。
 
+回想一下在上一章中，我们是如何使用递归循环并将（可能）修改过的状态传递给该循环的下一次调用来管理状态的。不同回调的返回值会影响状态。在一个非平凡的进程中手动实现这一点会导致代码看起来很笨拙。
 
-We begin with the workhorse of the application, the worker. In
-`lib/worker.ex`, we first declare a new module and specify that we want to make use of the GenServer behaviour:
+使用GenServer也使得它很容易被插入到比如说，一个监督器中。编写符合OTP行为的程序的好处是，它们看起来往往相似。这意味着，如果你看别人的GenServer，你很可能会很容易地知道它可以处理哪些消息，它可以给出什么回复，以及回复是同步的还是异步的。
 
+现在你知道了只需输入`use GenServer`就能得到的一些好处。Elixir自动定义了GenServer所需的所有回调。在Erlang中，你需要指定相当多的样板代码。这意味着你可以挑选和选择你想要实现的回调。这些回调到底是什么呢？很高兴你问到这个问题。
 
-Listing 4. 4 Using the GenServer behaviour
+表4.2 左边的GenServer函数调用右边在Metex.Worker中定义的回调函数
 
-`defmodule Metex.Worker do`
-`use GenServer #1`
-`end`
-#1 Automatically define all the callbacks required for the GenServer
-
-
-Simply having
-`use GenServer`, Elixir automatically defines all the callbacks needed by the GenServer. This means that you get to pick and choose which callbacks you want to implement. What exactly are these callbacks? Glad you asked.
-
-
-4.1.4        Callbacks
-
-
-There are exactly six callbacks that are automatically defined for you. Here's the entire list:
-
-
-`·`
-`init(args)`
-
-
-`·`
-`handle_call(msg, {from, ref}, state}`
-
-
-`·`
-`handle_cast(msg, state}`
-
-
-`·`
-`handle_info(msg, state)`
-
-
-`·`
-`terminate(reason, state)`
-
-
-`·`
-`code_change(old_vsn, state, extra)`
-
-
-Before we go any further, it helps to remind ourselves *why* are we even bothering to make the worker a GenServer, especially since (as you will see soon) you need to learn about the various callback functions and proper return values.
-
-
-The biggest benefit that using OTP gives you is all the things that you do *not* have to worry about when you write your own client-server programs or supervisors. For example, how would you write a function that makes an asynchronous request? What about a synchronous one? The GenServer behaviour provides
-`handle_cast/2`
-and
-`handle_call/3`
-for that exact use case.
-
-
-Your process has to handle different kinds of messages. As the kinds of messages grow, a hand-rolled process might grow unwieldy. Once again, GenServer’s various
-`handle_*`
-functions provide a neat way to specify the different kinds of messages that you want to handle. Receiving messages is just half the equation. You also need a way to handle replies. As expected, the callbacks have got your back (pun intended!) since it makes it convenient to access to pid of the sender process.
-
-
-Now let’s think about state management. Every process needs a way to initialize state. It also needs a way to potentially perform some cleanup before the process is terminated. GenServer’s
-`init/1`
-and
-`terminate/2`
-are just the callbacks you need.
-
-
-Recall that in the previous chapter how we managed state using a recursive loop and passing the (potentially) modified state into the next invocation of that loop. The return value of the different callbacks will affect the states. Hand-rolling this in a non-trivial process results in clumsy looking code.
-
-
-Using a GenServer also makes it easy to be plugged into say, a Supervisor. A nice thing about writing programs that conform to OTP behaviours is that they tend to look similar. This means that if you were to look at someone else’s GenServer you most probably would easily tell which are the messages that it can handle and what replies it can give, and whether the replies are synchronous or asynchronous.
-
-
-Now you know some of the benefits of simply having to type
-`use GenServer`. Elixir automatically defines all the callbacks needed by the GenServer. In Erlang, you would have to specify quite a bit of boilerplate. This means that you get to pick and choose which callbacks you want to implement. What exactly are these callbacks? Glad you asked.
-
-
-Table 4.2 GenServer functions on the left call the callback functions, defined in Metex.Worker, on the right
-
-
-
-
-|  |  |
+| GenServer模块调用... | 回调模块（在Metex.Worker中实现）|
 | --- | --- |
-| 
-GenServer Module calls …
- | 
-Callback Module (Implemented in Metex.Worker)
- |
-|
-`GenServer.start_link/3`
-|
-`Metex.init/1`
-|
-|
-`GenServer.call/3`
-|
-`Metex.handle_call/3`
-|
-|
-`GenServer.cast/2`
-|
-`Metex.handle_cast/2`
-|
+|`GenServer.start_link/3`|`Metex.init/1`|
+|`GenServer.call/3`|`Metex.handle_call/3`|
+|`GenServer.cast/2`|`Metex.handle_cast/2`|
 
+每个回调都期望一个符合GenServer期望的返回值。下面是一个表格，总结了回调、调用它们的函数以及期望的返回值。当你需要确定每个回调期望的确切返回值时，你会发现这个表格特别有帮助。我发现自己经常参考这个表格。
 
-Each callback expects a return value that conforms to what GenServer expects. Here's a table that summarizes the callbacks, the functions that call them, and the expected return value. You will find the table especially helpful when you need to figure out the exact return values that each callback expects. I find myself referring to this table constantly.
+表4.3 GenServer回调及其期望的返回值
 
-
-Table 4.3 GenServer callbacks and their expected return values
-
-
-
-
-|  |  |
+|回调 | 期望的返回值 |
 | --- | --- |
-| 
-Callbacks
- | 
-Expected Return Value
- |
-|
-`init(args)`
- |
-`·`
-`{:ok, state}`
-`·`
-`{:ok, state, timeout}`
-`·`
-`:ignore`
-`·`
-`{:stop, reason}`
-|
-|
-`handle\_call(msg, {from, ref},state)`
- |
-`·`
-`{:reply, reply, state}`
-`·`
-`{:reply, reply, state, timeout}`
-`·`
-`{:reply, reply, state, :hibernate}`
-`·`
-`{:noreply, state}`
-`·`
-`{:noreply, state, timeout}`
-`·`
-`{:noreply, state, hibernate}`
-`·`
-`{:stop, reason, reply, state}`
-`·`
-`{:stop, reason, state}`
-|
-|
-`handle\_cast(msg, state)`
- |
-`·`
-`{:noreply, state}`
-`·`
-`{:noreply, state, timeout}`
-`·`
-`{:noreply, state, :hibernate}`
-`·`
-`{:stop, reason, state}`
-|
-|
-`handle\_info(msg, state)`
- |
-`·`
-`{:noreply, state}`
-`·`
-`{:noreply, state, timeout}`
-`·`
-`{:stop, reason, state}`
-|
-|
-`terminate(reason, state)`
- |
-`·`
-`:ok.`
- |
-|
-`code\_change(old\_vsn, state, extra)`
- |
-`·`
-`{:ok, new\_state}`
-`·`
-`{:error, reason}`
-|
+|`init(args)` |`{:ok, state}`|
+|                |`{:ok, state, timeout}`|
+||`:ignore`|
+||`{:stop, reason}`|
+|`handle_call(msg, {from, ref},state)` |`{:reply, reply, state}`|
+||`{:reply, reply, state, timeout}`|
+||`{:reply, reply, state, :hibernate}`|
+||`{:noreply, state}`|
+||`{:noreply, state, timeout}`|
+||`{:noreply, state, hibernate}`|
+||`{:stop, reason, reply, state}`|
+||`{:stop, reason, state}`|
+|`handle_cast(msg, state)` |`{:noreply, state}`|
+||`{:noreply, state, timeout}`|
+||`{:noreply, state, :hibernate}`|
+||`{:stop, reason, state}`|
+|`handle_info(msg, state)` |`{:noreply, state}`|
+||`{:noreply, state, timeout}`|
+||`{:stop, reason, state}`|
+|`terminate(reason, state)` |`:ok.` |
+|`code_change(old_vsn, state, extra)` |`{:ok, new_state}`|
+||`{:error, reason}`|
 
+当调用`GenServer.start_link/3`时，会调用`init(args)`。让我们在代码中看看：
 
-`init(args)`
-is invoked when
-`GenServer.start_link/3`
-is called. Let's see that in code:
+清单 4. 5 用客户端API、服务器回调和辅助函数结构化代码
 
+```elixir
+defmodule Metex.Worker do
+use GenServer
 
-Listing 4. 5 Structuring the code with client API, server callbacks and helper functions
+## Client API
 
-`defmodule Metex.Worker do`
-`use GenServer`
+def start_link(opts \\ []) do
+GenServer.start_link(__MODULE__, :ok, opts)
+end
 
-`## Client API`
+## Server Callbacks
 
-`def start_link(opts \\ []) do`
-`GenServer.start_link(__MODULE__, :ok, opts)`
-`end`
+def init(:ok) do
+{:ok, %{}} 
+end
 
-`## Server Callbacks`
+## Helper Functions
+end
+```
+在这里，我通过注释划分了不同的代码部分。你通常会发现野生的Elixir/Erlang程序遵循类似的约定。由于我们还没有引入任何辅助函数，所以“辅助函数”部分被留空。
 
-`def init(:ok) do`
-`{:ok, %{}}`
-`end`
+`start_link/3` 和 `init/1`
 
-`## Helper Functions`
-`end`
-Here, I have demarcated, by way of comments, the different sections of code. You will usually find Elixir/Erlang programs in the wild follow a similar convention. Since we haven’t introduced any helper functions just yet, the “Helper Functions” section has been left unfilled.
+`GenServer.start_link/3`接受GenServer实现的模块名，其中定义了`init/1`回调。它启动进程并将服务器进程链接到父进程。这意味着，如果服务器进程由于某种原因失败，父进程将被通知。
 
+第二个参数是要传递给`init/1`的参数。由于我们不需要任何参数，所以`:ok`就足够了。
 
-start\_link/3 and init/1
+最后一个参数是要传递给`GenServer.start_link/3`的选项列表。这些选项包括定义一个名字来注册进程和启用额外的调试信息。现在，我们可以传入一个空列表。
 
+当调用`GenServer.start_link/3`时，它会调用`Metex.init/1`。它会等待`Metex.init/1`返回后再返回。`Metex.init/1`的有效返回值是什么呢？查阅表格，我们得到以下四个值：
 
-`GenServer.start_link/3`
-takes in the module name of the GenServer implementation where the
-`init/1`
-callback is defined. It starts the process and also links the server process to the parent process. This means that if the server process fails for some reason, the parent process would be notified.
+- `{:ok, state}`
+- `{:ok, state, timeout}`
+- `:ignore`
+- `{:stop, reason}`
 
+现在，我们选择最简单的，`{:ok state}`。看看我们的实现，这种情况下的`state`被初始化为一个空的Map，`%{}`。我们需要这个map来保持请求位置的频率。
 
-The second argument is for arguments to be passed to
-`init/1`. Since we do not require any, an
-`:ok`
-suffices.
-
-
-The final argument is a list of options to be passed to
-`GenServer.start_link/3`. These options include defining a name to register the process with and to enable extra debugging information. For now, we can pass in an empty list.
-
-
-When
-`GenServer.start_link/3`
-is called, it invokes
-`Metex.init/1`. It waits until Metex.init/1 has returned, before returning. What are valid return values of
-`Metex.init/1`? Consulting the table, we get the following four values:
-
-
-`·`
-`{:ok, state}`
-
-
-`·`
-`{:ok, state, timeout}`
-
-
-`·`
-`:ignore`
-
-
-`·`
-`{:stop, reason}`
-
-
-For now, we go for the simplest,
-`{:ok state}`. Looking at our implementation,
-`state`
-in this case is initialized to an empty Map,
-`%{}`. We need this map to keep the frequency of requested locations.
-
-
-Let's give this a spin! Open up your console and launch
-`iex`
-like so:
+让我们试一试！打开你的控制台并启动`iex`，就像这样：
 
 `% iex -S mix`
-Let's now start a server process and link it to the calling process. In this case, it's the shell process:
 
+现在让我们启动一个服务器进程并将其链接到调用进程。在这种情况下，它是shell进程：
 
-Listing 4.6 Starting the server process
+清单 4.6 启动服务器进程
 
-`iex(1)> {:ok, pid} = Metex.Worker.start_link`
-`{:ok, #PID<0.134.0>}`
-The result is a two-element tuple, and
-`:ok`
-and the pid of the new server process.
+```elixir
+iex(1)> {:ok, pid} = Metex.Worker.start_link
+{:ok, #PID<0.134.0>}
+```
+结果是一个两元素的元组，和`:ok`以及新服务器进程的pid。
 
+### 4.3.4 使用 `handle_call/3` 处理同步请求
 
-4.1.5        Handling Synchronous Requests with handle\_call/3
+让我们回到代码。现在，我们希望我们的服务器进程处理请求，这是有服务器进程的全部意义。让我们从客户端API开始，然后向下工作。
 
+清单 4.7 使用 GenServer.call/3 实现同步请求
 
-Let's head back to the code. Now, we want to have our server process handle requests, which is the whole point of having a server process. Let's start from the the client API and work downwards.
+```elixir
+defmodule Metex.Worker do
+use GenServer
 
+## Client API
 
-Listing 4.7 Implementing a synchronous request with GenServer.call/3
+# ...
 
-`defmodule Metex.Worker do`
-`use GenServer`
+def get_temperature(pid, location) do
+GenServer.call(pid, {:location, location})
+end
 
-`## Client API`
+## Server API
 
-`# ...`
+# ...
+end
+```
+客户端可能会这样获取新加坡的温度：
 
-`def get_temperature(pid, location) do`
-`GenServer.call(pid, {:location, location})`
-`end`
+```elixir
+Metex.Worker.get_temperature(pid, "Singapore").
+```
+上述函数包装了对`GenServer.call/3`的调用，传入pid和一个带有`:location`标签和实际`location`的元组。反过来，`GenServer.call/3`期望在`Metex.Worker`模块中定义一个`handle_call/3`并相应地调用它。
 
-`## Server API`
+`GenServer.call/3`向服务器发出*同步*请求。这意味着期望服务器的回复。`GenServer.call/3`的兄弟是`GenServer.cast/2`，它向服务器发出*异步*请求。我们稍后会看到这个。现在，这是`{:location, location}`消息的`handle_call/3`的实现：
 
-`# ...`
-`end`
-Here’s how a client might retrieve the temperature of Singapore:
+清单 4.8 实现 handle\_call 回调
 
-`Metex.Worker.get_temperature(pid, "Singapore").`
-The above functions wraps a call to
-`GenServer.call/3`, passing in the pid, and a tuple that is tagged
-`:location`
-and the actual
-`location`. In turn,
-`GenServer.call/3`
-expects a
-`handle_call/3`
-defined in the
-`Metex.Worker`
-module and invoke it accordingly.
+```elixir
+defmodule Metex.Worker do
+use GenServer
 
+## Client API
 
-`GenServer.call/3`
-makes a *synchronous* request to the server. This means that a reply from the server is expected. The sibling to
-`GenServer.call/3`
-is
-`GenServer.cast/2`, which makes an *asynchronous* request to the server. We will take a look at that shortly. For now, here's the implementation of the
-`handle_call/3`
-for the
-`{:location, location}`
-message:
+# ...
 
+def get_temperature(pid, location) do
+GenServer.call(pid, {:location, location})
+end
 
-Listing 4.8 Implementing the handle\_call callback
+## Server API
 
-`defmodule Metex.Worker do`
-`use GenServer`
+# ...
 
-`## Client API`
+def handle_call(#1{:location, location}, #2_from, #3stats) do
+case temperature_of(location) do
+{:ok, temp} ->
+new_stats = update_stats(stats, location)
+{:reply, "#{temp}°C", new_stats}
 
-`# ...`
+_ ->
+{:reply, :error, stats}
+end
+end
+end
+```
+#1: 预期要处理的请求
 
-`def get_temperature(pid, location) do`
-`GenServer.call(pid, {:location, location})`
-`end`
 
-`## Server API`
+#2: 这实际上是一个形式为 {pid, tag} 的元组，表示发送者的 pid 和消息的唯一引用
 
-`# ...`
 
-`def handle_call(#1{:location, location}, #2_from, #3stats) do`
-`case temperature_of(location) do`
-`{:ok, temp} ->`
-`new_stats = update_stats(stats, location)`
-`{:reply, "#{temp}°C", new_stats}`
+#3: GenServer 的当前状态
 
-`_ ->`
 
-`{:reply, :error, stats}`
-`end`
-`end`
-`end`
-#1: The expected request to be handled
+首先，让我们仔细看一下函数签名：
 
+```elixir
+def handle_call({:location, location}, _from, stats) do
+# ...end
+```
+第一个参数声明了预期要处理的请求。第二个参数返回一个形式为`{pid, tag}`的元组，其中`pid`是客户端的pid，`tag`是消息的唯一引用。第三个参数，`state`，表示服务器的*内部状态*。在我们的情况下，它是当前有效位置的频率计数。
 
-#2: This is in fact a tuple in the form of {pid, tag} which represents the pid of the sender and the message’s unique reference
+现在，让我们关注`handle_call({:location, location}, ...})`的主体：
 
+```elixir
+def handle_call({:location, location}, _from, stats) do
+    case temperature_of(location) do              #1
+        {:ok, temp} ->
+            new_stats = update_stats(stats, location) #2
+            {:reply, "#{temp}°C", new_stats}          #3
 
-#3: The current state of the GenServer
-
-
-Let's first take a closer look at the function signature:
-
-`def handle_call({:location, location}, _from, stats) do`
-`# ...``end`
-The first argument declares the expected request to be handled. The second argument returns a tuple in the form of
-`{pid, tag}`, where the
-`pid`
-is the pid of the client, and
-`tag`
-is a unique reference of the message. The third argument,
-`state`, represents the *internal state* of the server. In our case, it is the current frequency counts of valid locations.
-
-
-Now, let's turn out attention to the body of
-`handle_call({:location, location}, ...})`:
-
-`def handle_call({:location, location}, _from, stats) do`
-`case temperature_of(location) do              #1`
-`{:ok, temp} ->`
-`new_stats = update_stats(stats, location) #2`
-`{:reply, "#{temp}°C", new_stats}          #3`
-
-`_ ->`
-`{:reply, :error, stats}                   #3`
-`end``end`
-#1: Makes a request to the API for location's temperature
-
-
-#2: Update the
-`stats`
-Map with the location frequency
-
-
-#3: Return a three-element tuple as a response.
-
-
-`Metex.Worker.temperature_of/1`
-makes a request to the third-party API to get the location's temperature. If it succeeds,
-`Metex.Worker.update_stats/2`
-is invoked to return a new Map with the updated frequency of location. Finally, it returns a three-element tuple that any
-`handle_call/3`
-is expected to return.
-
-
-In particular, this three-element tuple begins with a
-`:reply`, followed by the actual computed responses, followed by the update state, which in this case is
-`new_stats`. If the request to the third-party API fails for some reason or another, then
-`{:reply, :error, stats}`
-is returned. Here are the valid responses of a
-`handle_call/3`:
-
-
-`·`
-`{:reply, reply, state}`
-
-
-`·`
-`{:reply, reply, state, timeout}`
-
-
-`·`
-`{:reply, reply, state, :hibernate}`
-
-
-`·`
-`{:noreply, state}`
-
-
-`·`
-`{:noreply, state, timeout}`
-
-
-`·`
-`{:noreply, state, hibernate}`
-
-
-`·`
-`{:stop, reason, reply, state}`
-
-
-`·`
-`{:stop, reason, state}`
-
-
-Let's fill in the missing pieces in order to get
-`Metex.Worker.get_temperature/2`
-to work:
-
-
-Listing 4.9 Implementing the helper functions
-
-`defmodule Metex.Worker do`
-`use GenServer`
-
-`## Client API and Server API`
-
-`## previously implemented code`
- 
-`## Helper Functions`
-
-`defp temperature_of(location) do`
-`url_for(location) |> HTTPoison.get |> parse_response`
-`end`
-
-`defp url_for(location) do`
-`"http://api.openweathermap.org/data/2.5/weather?q=#{location}&APPID=#{apikey}"`
-`end`
-
-`defp parse_response({:ok, %HTTPoison.Response{body: body, status_code: 200}}) do`
-`body |> JSON.decode! |> compute_temperature`
-`end`
-
-`defp parse_response(_) do`
-`:error`
-`end`
-
-`defp compute_temperature(json) do`
-`try do`
-`temp = (json["main"]["temp"] - 273.15) |> Float.round(1)`
-`{:ok, temp}`
-`rescue`
-`_ -> :error`
-`end`
-`end`
-
-`def apikey do`
-`“APIKEY-GOES-HERE”`
-`end`
-
-`defp update_stats(old_stats, location) do`
-`case Map.has_key?(old_stats, location) do`
-`true ->`
-`Map.update!(old_stats, location, &(&1 + 1))`
-`false ->`
-`Map.put_new(old_stats, location, 1)`
-`end`
-`end`
-`end`
-Most of the implementation is the same as Chapter 3, except for minor changes to
-`Metex.Worker.temperature_of/1`
-and
-`Metex.Worker.update_stats/2`, which are completely new. The implementation of
-`Metex.Worker.update_stats/2`
-is pretty simple:
-
-
-Listing 4.10 Updating the frequency of a requested location
-
-`defp update_stats(old_stats, location) do`
-`case Map.has_key?(old_stats, location) do`
-`true ->`
-`Map.update!(old_stats, location, &(&1 + 1))`
-`false ->`
-`Map.put_new(old_stats, location, 1)`
-`end``end`
-This function takes in the
-`old_stats`
-and the
-`location`
-requested. We first check if
-`old_stats`
-contains the location of the key. If so, we can simply fetch the value and increment the counter. Otherwise, we put in a new key called denoted by
-`location`
-and set it to
-`1`. If the
-`&(&1 + 1)`
-seems confusing, you can do a syntactical "unsugaring" in your head:
-
-`Map.update!(old_stats, location, fn(val) -> val + 1 end)`
-Let's take
-`Metex.Worker`
-out for another spin. Once again, fire up
-`iex`, the start the server with
-`Metex.Worker.start_link/1`:
-
-`% iex -S mix`
-`iex(1)> {:ok, pid} = Metex.Worker.start_link``{:ok, #PID<0.125.0>}]`
-Now, let's get the temperatures from a few famous locations:
-
-`iex(2)> Metex.Worker.get_temperature(pid, "Babylon")`
-`"12.7°C"`
-`iex(3)> Metex.Worker.get_temperature(pid, "Amarillo")`
-`"5.3°C"`
-`iex(4)> Metex.Worker.get_temperature(pid, "Memphis")`
-`"7.3°C"`
-`iex(5)> Metex.Worker.get_temperature(pid, "Rio")`
-`"23.5°C"`
-`iex(6)> Metex.Worker.get_temperature(pid, "Philadelphia")``"12.5°C"`
-4.1.6        Accessing the Server State
-
-
-Success! But wait, how do I get to see the contents of
-`stat`? In other words, how do we access the *server state*? Turns out, it is not hard. Let's implement the client facing API first:
-
-`def get_stats(pid) do`
-`GenServer.call(pid, :get_stats)``end`
-Since we expect a reply from the server, we need a synchronous reply from the server. Therefore, we should invoke
-`GenServer.call/3`. Here, we are saying that the server should handle a synchronous
-`:get_stats`
-message. Notice that messages can come in the form of any valid Elixir term. This means that tuples, lists and atoms are all fair game. Here's the callback function:
-
-`def handle_call(:get_stats, _from, stats) do`
-`{:reply, stats, stats}``end`
-Since we are interested in
-`stats`, we can simply return
-`stats`
-in the second argument as the reply. Since we are simply accessing
-`stats`, as opposed to modifying it, we simply pass it along unchanged as the third argument.
-
-
-Before we continue, here is a gentle reminder to *group* all your
-`handle_call`s (and later on,
-`handle_cast`s) together! This is important because the Erlang virtual machine relies on this for pattern matching. For example, if I were to "misplace"
-`handle_call`s like so:
-
-
-Listing 4.11 Notice that the handle\_calls are not grouped together
-
-`defmodule Metex.Worker do`
-`use GenServer`
-
-`## Client API`
-
-`# ...`
-
-`## Server Callbacks`
-
-`def handle_call(:get_stats, _from, stats) do # 1`
-`# ...`
-`end`
-
-`def init(:ok) do`
-`# ...`
-`end`
-
-`def handle_call({:location, location}, _from, stats) do`
-`# ...`
-`end`
-
-`## Helper Functions`
-
-`# ...``end`
-#1: handle\_calls and handle\_casts should be grouped together
-
-
-The compiler will then issue a friendly warning:
-
-`% iex -S mix`
-`lib/worker.ex:29: warning: clauses for the same def should be grouped together, def handle_call/3 was previously defined (lib/worker.ex:20)`
-4.1.7        Handling Asynchronous Requests with handle\_cast/2
-
-
-Asynchronous requests do not require a reply from the server. This also means that a
-`GenServer.cast/2`
-returns immediately. What is a good use case for
-`GenServer.cast/2`? A fine example would be a command that is issued to a server, which causes some side effect in the server's state. In that case, the client issuing the command shouldn't have to care about a reply.
-
-
-Let's construct such a command. This command, called
-`reset_stats`, will re-initialize stats back to an empty Map:
-
-
-Listing 4. 12 Handling resetting of stats
-
-`# Client API`
-
-`# ...`
-
-`def reset_stats(pid) do`
-`GenServer.cast(pid, :reset_stats)`
-`end`
-
-`# Server Callbacks`
-
-`# handle_calls go here`
-
-`def handle_cast(:reset_stats, _stats) do`
-`{:noreply, %{}}``end`
-`Metex.Worker.stats/1`
-will make a call to
-`GenServer.cast/2`. This in turn invokes the
-`handle_cast(:reset_stats, _stats)`
-callback. Since we do not care about the current state of the server (after all, we are resetting it), we prepend an underscore to
-`stats`.
-
-
-The return value is a two-element tuple with
-`:noreply`
-as the first element and an empty Map, the response, as the second argument. Again notice that the response is one of the valid
-`handle_cast/2`
-responses.
-
-
-Let's see our handiwork! Fire up
-`iex -S mix`
-again, and try out a couple of locations:
-
-`iex(1)> {:ok, pid} = Metex.Worker.start_link`
-`{:ok, #PID<0.134.0>}`
-`iex(2)> Metex.Worker.get_temperature pid, "Singapore"`
-`"29.0°C"`
-`iex(3)> Metex.Worker.get_temperature pid, "Malaysia"`
-`"22.7°C"`
-`iex(4)> Metex.Worker.get_temperature pid, "Brunei"`
-`"24.2°C"`
-`iex(5)> Metex.Worker.get_temperature pid, "Singapore"`
-`"29.0°C"`
-`iex(6)> Metex.Worker.get_temperature pid, "Cambodia"`
-`"27.7°C"`
-`iex(7)> Metex.Worker.get_temperature pid, "Brunei"`
-`"24.2°C"`
-`iex(8)> Metex.Worker.get_temperature pid, "Singapore"``"29.0°C"`
-Now we can try out the get\_stats/1 function:
-
-`iex(9)> Metex.Worker.get_stats pid`
-`%{"Brunei" => 2, "Cambodia" => 1, "Malaysia" => 1, "Singapore" => 3}`
-It works! You can clearly see the frequency of the requested locations represented by the Map. Now, let's try to reset
-`stats`:
-
-`iex(10)> Metex.Worker.reset_stats pid`
-`:ok`
-`iex(11)> Metex.Worker.get_stats pid``%{}`
-Perfect! It works as expected.
-
-
-4.1.8        Stopping the Server and Cleaning Up
-
-
-Sometimes, we need to free up resources, or some other cleanup tasks, before the server stops. That's when the
-`GenServer.terminate/2`
-comes in.
-
-
-How then do we stop the server? If you take a look at the callbacks table, under the
-`handle_call/handle_cast`
-column, you will find two valid responses that starts with
-`:stop`:
-
-
-`·`
-`{:stop, reason, new_state}`
-
-
-`·`
-`{:stop, reason, reply, new_state}`
-
-
-This is a signal to the GenServer that the server will be terminated. Therefore, all we need to do is to provide a
-`handle_call/3`/`handle_cast/2`
-callback that returns either of the responses listed above, and include any cleanup logic in the
-`GenServer`.terminate/2 callback. We will first write the
-`stop/1`
-function under client API:
-
-`def stop(pid) do`
-`GenServer.cast(pid, :stop)``end`
-Again, I've chosen a
-`GenServer.cast/2`
-because I don't really care about any return value. Another reason might be that the server might take time to properly clean up all resources, and I do not want to bother to wait it. The corresponding callback is simple enough:
-
-`def handle_cast(:stop, stats) do`
-`{:stop, :normal, stats}``end`
-We don't have any resources to speak of, but you can imagine that we might for example write
-`stats`
-to a file or database. In our example, let's just print the current state before we stop the server:
-
-
-Listing 4. 13 The terminate callback is called right before the server terminates
-
-`def terminate(reason, stats) do`
-`# We could write to a file, database etc`
-`IO.puts "server terminated because of #{inspect reason}"`
-`inspect stats`
-`:ok``end`
-`GenServer.terminate/2`
-has two arguments. The first argument provides a reason why the server terminated. In a normal termination, reason would be :`normal`. The
-`:normal`
-comes from the response from the
-`handle_cast/2`
-defined early. For errors, either arising from caught exceptions for example, you could include other reasons. Finally,
-`GenServer.terminate/2`
-must always return an
-`:ok`. Let's see how we can terminate a server in iex.
-
-`% iex -S mix`
-`iex(1)> {:ok, pid} = Metex.Worker.start_link`
-`{:ok, #PID<0.152.0>}`
-`iex(2)> Process.alive? pid`
-`true`
-`iex(3)> Metex.Worker.stop pid`
-`server terminated because of :normal`
-`:ok`
-`iex(4)> Process.alive? pid``false`
-4.1.9        What Happens when Callbacks Return an Invalid Response?
-
-
-Let's modify
-`handle_cast(:stop, stats)`
-return value slightly:
-
-`def handle_cast(:stop, stats) do`
-`{:stop, :normal, :ok, stats}``end`
-If you look at the table again, this corresponds to a valid
-`handle_call/3`
-response, not a
-`handle_cast/2`
-one! The extraneous
-`:ok`
-is for a reply to the client. Since
-`handle_cast/2`
-is not meant for replying to the client (at least, not  directly), this is obviously wrong. Let's see what happens when we repeat the same process of stopping the server:
-
-
-Listing 4. 14 When callbacks do not return the expected responses, GenServer gets upset
-
-`% iex -S mix`
-`iex(1)> {:ok, pid} = Metex.Worker.start_link`
-`{:ok, #PID<0.152.0>}`
-`iex(2)> Metex.Worker.stop pid`
-`iex(2)>`
-`10:59:15.906 [error] GenServer #PID<0.134.0> terminating #1`
-`Last message: {:"$gen_cast", :stop}                      #1`
-`State: %{}                                               #1``** (exit) bad return value: {:stop, :normal, :ok, %{}}   #1`
-`#1 GenServer reports an error when it receives an invalid response from a callback handler`
-
-
-Firstly, notice that there's *no* compile-time error. The error only surfaces when we try to stop the server, and GenServer freaks out by throwing a
-`bad return value: {:stop, :normal, :ok, %{}}`. Whenever you see something like that, your first instinct should be to double-check the return values of your callback handlers. It is sometimes very easy to miss out a minor detail, and the error messages might not be so obvious at first glance.
-
-
-4.1.10     Receiving Other Kinds of Messages
-
-
-Messages might arrive from other processes that might not be defined in
-`handle_call/3`/`handle_cast/2`. That is where
-`handle_info/2`
-comes in. It is invoked to handle any other messages that are received by the process, sometimes referred to as “out of band” messages. You do not need to supply a client API counterpart for
-`handle_info/2`. This callback takes in two arguments, the message received and the current state:
-
-`def handle_info(msg, stats) do`
-`IO.puts "received #{inspect msg}"`
-`{:noreply, stats}``end`
-Let's see this in action:
-
-
-Listing 4. 15 With handle\_info, the server process can handle any kind of unexpected message
-
-`iex(1)> {:ok, pid} = Metex.Worker.start_link`
-`{:ok, #PID<0.134.0>}`
-`iex(2)> send pid, "It's raining men"``received "It's raining men"`
-We will see much more interesting uses for
-`handle_info/2`
-in the later chapters. The main thing to remember is that
-`handle_info/2`
-is used for any other message that isn’t covered by
-`handle_call/3`/`handle_cast/2.`
-
-
-4.1.11     Process Registration
-
-
-Having to constantly reference the GenServer via the pid can be a pain. Fortunately, there's another way to do it.
-`GenServer.start_link/3`
-takes in a list of options as it's third argument.
-
-
-There are two common ways of registering a GenServer with a name. The difference lies in whether the name should be visible locally or globally. If the name is registered globally, then the name is unique across a cluster of connected nodes. (You will learn more about distribution soon). On the other hand, a locally registered name is only visible from within the local node.
-
-
-Having a registered name is great for a singleton GenServer. That is, only one should exist in a node or cluster. We will let
-`Metex.Worker`
-be registered under
-`MW`. When we choose to register a name for the GenServer, we no longer have to reference the process using its pid. Fortunately, the only places we have to change are the invocations to
-`GenServer.call/3`
-and
-`GenServer.cast/2`
-in the client API:
-
-
-Listing 4. 16 With an explicit name, the pid no longer has to be passed into the client API
-
-`defmodule Metex.Worker do`
-`use GenServer`
-
-`@name MW                                                    #1`
-
-`## Client API`
-
-`def start_link(opts \\ []) do`
-`GenServer.start_link(__MODULE__, :ok, opts ++ [name: MW]) #2`
-`end`
-
-`def get_temperature(location) do`
-`GenServer.call(@name, {:location, location})              #3`
-`end`
-
-`def get_stats do`
-`GenServer.call(@name, :get_stats)                         #3`
-`end`
-
-`def reset_stats do`
-`GenServer.cast(@name, :reset_stats)                       #3`
-`end`
-
-`def stop do`
-`GenServer.cast(@name, :stop)                              #3`
-`end`
-
-`# The rest of the code remains unchanged.`
-`# ...``end`
-#1 Store the name
-
-
-#2 Initialize the server with a registered name
-
-
-#3 Notice that we pass
-`@name`
-instead of
-`pid`
-
-
-Now, fire up
-`iex -S mix`
-again. This time, we do not have to explicitly capture the pid. However, it is a good idea, because we usually want to know if the server started correctly, and therefore would want to make sure that the
-`:ok`
-is pattern matched.
-
-
-Here is how we would interact with
-`Metex.Worker`
-now:
-
-`% iex -S mix`
-`iex(1)> Metex.Worker.start_link`
-`{:ok, #PID<0.134.0>}`
-`iex(2)> Metex.Worker.get_temperature "Singapore"`
-`"29.3°C"`
-`iex(3)> Metex.Worker.get_temperature "London"`
-`"2.0°C"`
-`iex(4)> Metex.Worker.get_temperature "Hong Kong"`
-`"24.0°C"`
-`iex(5)> Metex.Worker.get_temperature "Singapore"`
-`"29.3°C"`
-`iex(6)> Metex.Worker.get_stats`
-`%{"Hong Kong" => 1, "London" => 1, "Singapore" => 2}`
-`iex(7)> Metex.Worker.stop`
-`server terminated because of :normal``:ok`
-4.1.12     Reflecting on Chapter 3's Metex
-
-
-Look again at the
-`Metex`
-we built in Chapter 3. Try to imagine what we would need to add to obtain the same functionality as the
-`Metex`
-we built in this chapter. Also, try to figure out where you would put all these functionality.
-
-
-You might realize that some features are not as straightforward to implement. For instance, how would you implement a synchronous and asynchronous call? What about stopping the server? In that case, we would have to specially handle the stop message, and not run the loop. Where would we then stick the logic for cleaning up resources?
-
-
-In the earlier version of
-`Metex.Worker`, we had to handle unexpected messages explicitly with the catchall operator (that's the underscore) in loop. With OTP, this is handled with the
-`handle_info/2`
-callback. Stopping of the server was also not handled.
-
-
-Given all these issues, you would soon realize that the loop function would start to balloon in size. Of course, you could always abstract everything out in nice little functions, but that can only go so far.
-
-
-Hopefully, you can start to see the benefits of OTP. Using OTP behaviours helps you attain a consistent structure in your code. It makes it easy to eyeball exactly where the client API is, where the server callbacks are defined, and where the helper methods are located.
-
-
-Besides providing consistency, OTP provides many helpful features that are common to all server-like programs. For example, managing state using GenServer is a breeze. No longer do you have to stick your state in a loop. Being able to decide when you state should change in the callbacks is also extremely useful.
-
-
-4.4           Exercises
-
-
-Write a GenServer that can store any valid Elixir term, given a key. Here are a few operations to get you started:
-
-
-`·`
-`Cache.write(:stooges, ["Larry", "Curly", "Moe"])`
-
-
-`·`
-`Cache.read(:stooges)`
-
-
-`·`
-`Cache.delete(:stooges)`
-
-
-`·`
-`Cache.clear`
-
-
-`·`
-`Cache.exist?(:stooges)`
-
-
-Structure your program similar to how we did in this chapter. In particular, pay attention to which of the above operations should be
-`handle_call`s or
-`handle_cast`s.
-
-
-Table 4.2 A summary of the relationship between the Client API, GenServer and Callback functions
-
-
-
-
-|  |  |  |  |  |
-| --- | --- | --- | --- | --- |
-| 
-Metex.Worker Client API
- |   | 
-GenServer
- |   | 
-Metex.Worker Callback
- |
-|
-`MW.start_link(:ok)`
-|
-`è`
-|
-`GS.start_link`
-|
-`è`
-|
-`MW.init(:ok)`
-|
-|
-`MW.get_temp(p,“NY”)`
-|
-`è`
-|
-`GS.call(p,{:loc,“NY”})`
-|
-`è`
-|
-`MW.handle_call(`
-`{:loc, “NY”}, fr, st)`
-|
-|
-`MW.reset(p)`
- |
-`è`
-|
-`GS.cast(p, :reset)`
-|
-`è`
-|
-`MW.handle_cast(:reset,  st)`
-|
-|
-`MW.stop(p)`
-|
-`è`
-|
-`GS.cast(p, :stop)`
-|
-`è`
-|
-`MW.handle_cast(:stop, st)`
-|
-|  |  |  |
-`ç`
-| If the above returns
-`{:stop, :normal, st}`
-then
-`MW.terminate(:normal, st)`
-is called |
-
-
-4.5           Summary
-
-
-When I first learnt about GenServer, it was a lot to take in – And that is putting it gently. The following table is useful to group all the related functions together.
-
-
-Along with some of the function names, I have abbreviated
-`Metex.Worker`
-to
-`MW`,
-`GenServer`
-to
-`GS.`
-The
-`state`
-has been shortened to
-`st`
-and
-`from`
-shortened to
-`fr`.  Finally,
-`pid`
-is
-`p`.
-
-
-Let’s go through the last row. Say I want to stop the worker process, and I call
-`Metex.Worker.stop/1`. This will in turn invoke
-`GenServer.cast/2`, passing in the
-`pid`
-and
-`:stop`
-as arguments. The callback that is triggered would be
-`Metex.Worker.handle_cast(:stop, state)`. If the callback returns a tuple of the form
-`{:stop, :normal, state}`, then
-`Metex.Worker.terminate/2`
-is invoked.
-
-
-We covered a lot of ground in this chapter. Here's a recap:
-
-
-·      What OTP is, and the principles and motivations behind it
-
-
-·      The different kinds of OTP behaviours available
-
-
-·      Converting Metex to use GenServer
-
-
-·      The various callbacks provided by GenServer
-
-
-·      Managing state in the GenServer
-
-
-·      Structuring your code according to convention
-
-
-·      Process registration
-
-
-There's one other benefit that I have been intentionally keeping from you until now. Using the GenServer behaviour lets you stick GenServers into a supervision tree. What happens if your GenServer crashes? How will it affect the rest of the parts of your system and how can you ensure that your system stays functional?
-
-
-Read on, dear reader, because Supervisors – which happens to be one of my favorite features of OTP – is up next!
-
+        _ -> {:reply, :error, stats}                   #3
+    end
+end
+```
+#1: 向 API 请求位置的温度
+#2: 使用位置频率更新 `stats` Map
+#3: 返回一个作为响应的三元素元组。
+
+`Metex.Worker.temperature_of/1`向第三方API发出请求，以获取位置的温度。如果成功，`Metex.Worker.update_stats/2`被调用，返回一个带有更新的位置频率的新Map。最后，它返回一个任何`handle_call/3`都期望返回的三元素元组。
+
+特别是，这个三元组以`:reply`开始，然后是实际计算的响应，然后是更新的状态，这种情况下是`new_stats`。如果出于某种原因向第三方API的请求失败，那么将返回`{:reply, :error, stats}`。以下是`handle_call/3`的有效响应：
+
+- `{:reply, reply, state}`
+- `{:reply, reply, state, timeout}`
+- `{:reply, reply, state, :hibernate}`
+- `{:noreply, state}`
+- `{:noreply, state, timeout}`
+- `{:noreply, state, hibernate}`
+- `{:stop, reason, reply, state}`
+- `{:stop, reason, state}`
+
+让我们填补一下缺失的部分，以便让`Metex.Worker.get_temperature/2`工作：
+
+清单 4.9 实现辅助函数
+
+```elixir
+defmodule Metex.Worker do
+    use GenServer
+
+    ## Client API and Server API
+
+    ## previously implemented code
+    
+    ## Helper Functions
+
+    defp temperature_of(location) do
+        url_for(location) |> HTTPoison.get |> parse_response
+    end
+
+    defp url_for(location) do
+        "http://api.openweathermap.org/data/2.5/weather?q=#{location}&APPID=#{apikey}"
+    end
+
+    defp parse_response({:ok, %HTTPoison.Response{body: body, status_code: 200}}) do
+        body |> JSON.decode! |> compute_temperature
+    end
+
+    defp parse_response(_) do
+        :error
+    end
+
+    defp compute_temperature(json) do
+        try do
+            temp = (json["main"]["temp"] - 273.15) |> Float.round(1)
+            {:ok, temp}
+        rescue
+            _ -> :error
+        end
+    end
+
+    def apikey do
+        "APIKEY-GOES-HERE"
+    end
+
+    defp update_stats(old_stats, location) do
+        case Map.has_key?(old_stats, location) do
+            true ->
+            Map.update!(old_stats, location, &(&1 + 1))
+            false ->
+            Map.put_new(old_stats, location, 1)
+        end
+    end
+end
+```
+大部分的实现与第3章相同，只是对`Metex.Worker.temperature_of/1`和`Metex.Worker.update_stats/2`做了一些小的修改，这两个函数是全新的。`Metex.Worker.update_stats/2`的实现非常简单：
+
+清单 4.10 更新请求位置的频率
+
+```elixir
+defp update_stats(old_stats, location) do
+    case Map.has_key?(old_stats, location) do
+        true ->
+        Map.update!(old_stats, location, &(&1 + 1))
+        false ->
+        Map.put_new(old_stats, location, 1)
+    end
+end
+```
+这个函数接收`old_stats`和请求的`location`。我们首先检查`old_stats`是否包含位置的键。如果是，我们可以简单地获取值并增加计数器。否则，我们放入一个由`location`表示的新键，并将其设置为`1`。如果`&(&1 + 1)`看起来让人困惑，你可以在你的脑海中进行语法“去糖化”：
+
+```elixir
+Map.update!(old_stats, location, fn(val) -> val + 1 end)
+```
+让我们再次尝试一下`Metex.Worker`。再次启动`iex`，然后使用`Metex.Worker.start_link/1`启动服务器：
+
+```elixir
+% iex -S mix
+iex(1)> {:ok, pid} = Metex.Worker.start_link
+{:ok, #PID<0.125.0>}
+```
+现在，让我们从一些著名的地点获取温度：
+
+```elixir
+iex(2)> Metex.Worker.get_temperature(pid, "Babylon")
+"12.7°C"
+iex(3)> Metex.Worker.get_temperature(pid, "Amarillo")
+"5.3°C"
+iex(4)> Metex.Worker.get_temperature(pid, "Memphis")
+"7.3°C"
+iex(5)> Metex.Worker.get_temperature(pid, "Rio")
+"23.5°C"
+iex(6)> Metex.Worker.get_temperature(pid, "Philadelphia")
+"12.5°C"
+```
+### 4.3.5 访问服务器状态
+
+成功了！但等一下，我如何查看`stat`的内容呢？换句话说，我们如何访问*服务器状态*？事实证明，这并不难。让我们首先实现面向客户端的API：
+
+```elixir
+def get_stats(pid) do
+    GenServer.call(pid, :get_stats)
+end
+```
+由于我们期望服务器的回复，我们需要服务器的同步回复。因此，我们应该调用`GenServer.call/3`。在这里，我们说服务器应该处理一个同步的`:get_stats`消息。注意，消息可以是任何有效的Elixir项的形式。这意味着元组、列表和原子都是公平的游戏。这是回调函数：
+
+```elixir
+def handle_call(:get_stats, _from, stats) do
+    {:reply, stats, stats}
+end
+```
+由于我们对`stats`感兴趣，我们可以在第二个参数中简单地返回`stats`作为回复。由于我们只是访问`stats`，而不是修改它，我们简单地将其保持不变作为第三个参数。
+
+在我们继续之前，这里有一个温馨的提醒，要*将所有的`handle_call`（以及稍后的`handle_cast`）分组在一起*！这很重要，因为Erlang虚拟机依赖于这个进行模式匹配。例如，如果我"误放"了`handle_call`，就像这样：
+
+清单 4.11 注意 `handle_calls` 没有分组在一起
+
+```elixir
+defmodule Metex.Worker do
+    use GenServer
+
+    ## Client API
+
+    # ...
+
+    ## Server Callbacks
+
+    def handle_call(:get_stats, _from, stats) do # 1
+        # ...
+    end
+
+    def init(:ok) do
+        # ...
+    end
+
+    def handle_call({:location, location}, _from, stats) do
+        # ...
+    end
+
+    ## Helper Functions
+
+    # ...
+end
+```
+#1: handle\_calls 和 handle\_casts 应该分组在一起
+
+然后，编译器会发出一个友好的警告：
+
+```elixir
+% iex -S mix
+lib/worker.ex:29: warning: clauses for the same def should be grouped together, def handle_call/3 was previously defined (lib/worker.ex:20)
+```
+
+### 4.3.6 使用 `handle_cast/2` 处理异步请求
+
+异步请求不需要服务器的回复。这也意味着`GenServer.cast/2`会立即返回。对于`GenServer.cast/2`来说，什么是一个好的用例呢？一个很好的例子是向服务器发出一个命令，这个命令会在服务器的状态中产生一些副作用。在这种情况下，发出命令的客户端不应该关心回复。
+
+让我们构造这样一个命令。这个命令叫做`reset_stats`，它将把stats重新初始化为一个空的Map：
+
+清单 4. 12 处理重置统计
+
+```elixir
+# Client API
+
+# ...
+
+def reset_stats(pid) do
+GenServer.cast(pid, :reset_stats)
+end
+
+# Server Callbacks
+
+# handle_calls go here
+
+def handle_cast(:reset_stats, _stats) do
+{:noreply, %{}} 
+end
+```
+`Metex.Worker.stats/1`将调用`GenServer.cast/2`。这反过来又调用了`handle_cast(:reset_stats, _stats)`回调。由于我们不关心服务器的当前状态（毕竟，我们正在重置它），我们在`stats`前面加上一个下划线。
+
+返回值是一个两元素的元组，第一个元素是`:noreply`，第二个元素是一个空的Map，也就是响应。再次注意，响应是有效的`handle_cast/2`响应之一。
+
+让我们看看我们的成果！再次启动`iex -S mix`，然后尝试一些位置：
+
+```elixir
+iex(1)> {:ok, pid} = Metex.Worker.start_link
+{:ok, #PID<0.134.0>}
+iex(2)> Metex.Worker.get_temperature pid, "Singapore"
+"29.0°C"
+iex(3)> Metex.Worker.get_temperature pid, "Malaysia"
+"22.7°C"
+iex(4)> Metex.Worker.get_temperature pid, "Brunei"
+"24.2°C"
+iex(5)> Metex.Worker.get_temperature pid, "Singapore"
+"29.0°C"
+iex(6)> Metex.Worker.get_temperature pid, "Cambodia"
+"27.7°C"
+iex(7)> Metex.Worker.get_temperature pid, "Brunei"
+"24.2°C"
+iex(8)> Metex.Worker.get_temperature pid, "Singapore"
+"29.0°C"
+```
+现在我们可以尝试一下 get\_stats/1 函数：
+
+```elixir
+iex(9)> Metex.Worker.get_stats pid
+%{"Brunei" => 2, "Cambodia" => 1, "Malaysia" => 1, "Singapore" => 3}
+```
+它工作了！你可以清楚地看到由Map表示的请求位置的频率。现在，让我们试着重置`stats`：
+
+```elixir
+iex(10)> Metex.Worker.reset_stats pid
+:ok
+iex(11)> Metex.Worker.get_stats pid
+%{}
+```
+完美！它按预期工作了。
+
+### 4.3.7 停止服务器并清理
+
+有时，我们需要在服务器停止之前释放资源，或者进行一些其他的清理任务。这就是`GenServer.terminate/2`的作用。
+
+那么我们如何停止服务器呢？如果你查看回调表，在`handle_call/handle_cast`列下，你会发现两个以`:stop`开头的有效响应：
+
+- `{:stop, reason, new_state}`
+- `{:stop, reason, reply, new_state}`
+
+这是一个信号，告诉GenServer服务器将被终止。因此，我们需要做的就是提供一个返回上述响应中的任意一个的`handle_call/3`/`handle_cast/2`回调，并在`GenServer.terminate/2`回调中包含任何清理逻辑。我们首先在客户端API下写一个`stop/1`函数：
+
+```elixir
+def stop(pid) do
+    GenServer.cast(pid, :stop)
+end
+```
+再次，我选择了`GenServer.cast/2`，因为我并不真正关心任何返回值。另一个原因可能是服务器可能需要时间来正确地清理所有资源，而我不想等待。相应的回调非常简单：
+
+```elixir
+def handle_cast(:stop, stats) do
+    {:stop, :normal, stats}
+end
+```
+我们没有任何资源可以说的，但你可以想象我们可能会例如将`stats`写入文件或数据库。在我们的例子中，让我们在停止服务器之前打印当前状态：
+
+清单 4. 13 终止回调在服务器终止之前被调用
+
+```elixir
+def terminate(reason, stats) do
+    # 我们可以写入文件、数据库等
+    IO.puts "server terminated because of #{inspect reason}"
+    inspect stats
+    :ok
+end
+```
+`GenServer.terminate/2`有两个参数。第一个参数提供了服务器终止的原因。在正常终止时，原因将是`:normal`。`:normal`来自早期定义的`handle_cast/2`的响应。对于错误，例如由于捕获到的异常，你可以包含其他原因。最后，`GenServer.terminate/2`必须始终返回`:ok`。让我们看看我们如何在iex中终止一个服务器。
+
+```elixir
+% iex -S mix
+iex(1)> {:ok, pid} = Metex.Worker.start_link
+{:ok, #PID<0.152.0>}
+iex(2)> Process.alive? pid
+true
+iex(3)> Metex.Worker.stop pid
+server terminated because of :normal
+:ok
+iex(4)> Process.alive? pid
+false
+```
+
+### 4.3.8 当回调返回无效响应时会发生什么？
+
+让我们稍微修改一下`handle_cast(:stop, stats)`的返回值：
+
+```elixir
+def handle_cast(:stop, stats) do
+{:stop, :normal, :ok, stats}
+end
+```
+如果你再看一下表格，这对应于一个有效的`handle_call/3`响应，而不是`handle_cast/2`！多余的`:ok`是为了回复客户端。由于`handle_cast/2`并不是为了回复客户端（至少，不是直接回复），所以这显然是错误的。让我们看看当我们重复停止服务器的过程时会发生什么：
+
+清单 4. 14 当回调没有返回预期的响应时，GenServer会报错
+
+```elixir
+% iex -S mix
+iex(1)> {:ok, pid} = Metex.Worker.start_link
+{:ok, #PID<0.152.0>}
+iex(2)> Metex.Worker.stop pid
+iex(2)>
+10:59:15.906 [error] GenServer #PID<0.134.0> terminating #1
+Last message: {:"$gen_cast", :stop}                      #1
+State: %{}                                               #1
+** (exit) bad return value: {:stop, :normal, :ok, %{}}   #1
+#1 GenServer在收到回调处理器的无效响应时报告错误
+```
+首先，注意到这里*没有*编译时错误。只有当我们试图停止服务器时，错误才会浮出水面，GenServer会抛出一个`bad return value: {:stop, :normal, :ok, %{}}`。每当你看到这样的东西，你的第一反应应该是仔细检查你的回调处理器的返回值。有时候很容易忽略一些小细节，而且错误信息一开始可能并不那么明显。
+
+### 4.3.9 接收其他类型的消息
+
+可能会有来自其他进程的消息，这些消息可能没有在`handle_call/3`/`handle_cast/2`中定义。这就是`handle_info/2`的作用。它被调用来处理进程接收到的任何其他消息，有时被称为“带外”消息。你不需要为`handle_info/2`提供一个客户端API对应项。这个回调接收两个参数，接收到的消息和当前的状态：
+
+```elixir
+def handle_info(msg, stats) do
+IO.puts "received #{inspect msg}"
+{:noreply, stats}
+end
+```
+让我们看看这个在实践中的应用：
+
+清单 4. 15 有了 handle\_info，服务器进程可以处理任何类型的意外消息
+
+```elixir
+iex(1)> {:ok, pid} = Metex.Worker.start_link
+{:ok, #PID<0.134.0>}
+iex(2)> send pid, "It's raining men"
+received "It's raining men"
+```
+我们将在后面的章节中看到更多有趣的`handle_info/2`的用途。主要要记住的是，`handle_info/2`用于处理任何其他不被`handle_call/3`/`handle_cast/2`覆盖的消息。
+
+### 4.3.10 进程注册
+
+不断通过pid引用GenServer可能会很痛苦。幸运的是，还有另一种方法可以做到这一点。`GenServer.start_link/3`接受一个选项列表作为它的第三个参数。
+
+有两种常见的方式可以用一个名字注册一个GenServer。区别在于名字应该在本地还是全局可见。如果名字被全局注册，那么名字在连接的节点集群中是唯一的。（你将很快了解到分布）。另一方面，本地注册的名字只在本地节点内可见。
+
+对于单例GenServer来说，有一个注册的名字是很好的。也就是说，只应该在一个节点或集群中存在一个。我们将让`Metex.Worker`在`MW`下注册。当我们选择为GenServer注册一个名字时，我们就不再需要使用它的pid来引用进程。幸运的是，我们只需要改变客户端API中对`GenServer.call/3`和`GenServer.cast/2`的调用：
+
+清单 4. 16 有了一个明确的名字，就不再需要将pid传递给客户端API
+
+```elixir
+defmodule Metex.Worker do
+use GenServer
+
+@name MW                                     #1
+
+## Client API
+
+def start_link(opts \\ []) do
+GenServer.start_link(__MODULE__, :ok, opts ++ [name: MW]) #2
+end
+
+def get_temperature(location) do
+GenServer.call(@name, {:location, location})              #3
+end
+
+def get_stats do
+GenServer.call(@name, :get_stats)                         #3
+end
+
+def reset_stats do
+GenServer.cast(@name, :reset_stats)                       #3
+end
+
+def stop do
+GenServer.cast(@name, :stop)                              #3
+end
+
+# The rest of the code remains unchanged.
+# ...
+end
+```
+#1 存储名字
+
+
+#2 用一个注册的名字初始化服务器
+
+
+#3 注意我们传递的是`@name`而不是`pid`
+
+
+现在，再次启动`iex -S mix`。这次，我们不需要显式地捕获pid。然而，这是一个好主意，因为我们通常想知道服务器是否正确启动，因此我们希望确保匹配到`:ok`。
+
+现在，我们将如何与`Metex.Worker`交互：
+
+```elixir
+% iex -S mix
+iex(1)> Metex.Worker.start_link
+{:ok, #PID<0.134.0>}
+iex(2)> Metex.Worker.get_temperature "Singapore"
+"29.3°C"
+iex(3)> Metex.Worker.get_temperature "London"
+"2.0°C"
+iex(4)> Metex.Worker.get_temperature "Hong Kong"
+"24.0°C"
+iex(5)> Metex.Worker.get_temperature "Singapore"
+"29.3°C"
+iex(6)> Metex.Worker.get_stats
+%{"Hong Kong" => 1, "London" => 1, "Singapore" => 2}
+iex(7)> Metex.Worker.stop
+server terminated because of :normal
+:ok
+```
+
+### 4.3.11 回顾第3章的 Metex
+
+再看一下我们在第3章中构建的`Metex`。试着想象一下我们需要添加什么才能获得与本章中构建的`Metex`相同的功能。另外，试着想象一下你会把所有这些功能放在哪里。
+
+你可能会意识到，有些功能并不容易实现。例如，你如何实现同步和异步调用？停止服务器呢？在这种情况下，我们必须特别处理停止消息，而不是运行循环。那么我们应该在哪里放置清理资源的逻辑呢？
+
+在早期版本的`Metex.Worker`中，我们必须在循环中使用通配符操作符（即下划线）显式处理意外消息。在OTP中，这是通过`handle_info/2`回调处理的。服务器的停止也没有被处理。
+
+考虑到所有这些问题，你很快就会意识到循环函数的大小会开始膨胀。当然，你总是可以把所有的东西抽象出来，放在漂亮的小函数中，但这只能做到一定程度。
+
+希望你能开始看到OTP的好处。使用OTP行为可以帮助你在代码中获得一致的结构。它使你能够轻松地看到客户端API在哪里，服务器回调是如何定义的，以及辅助方法在哪里。
+
+除了提供一致性，OTP还提供了许多对所有类似服务器的程序都有用的功能。例如，使用GenServer管理状态非常简单。你不再需要将你的状态放在一个循环中。能够在回调中决定何时改变你的状态也非常有用。
+
+## 4.4 练习
+
+编写一个GenServer，可以存储任何有效的Elixir项，给定一个键。以下是一些可以让你开始的操作：
+
+- `Cache.write(:stooges, ["Larry", "Curly", "Moe"])`
+- `Cache.read(:stooges)`
+- `Cache.delete(:stooges)`
+- `Cache.clear`
+- `Cache.exist?(:stooges)`
+
+按照我们在本章中的方式来构造你的程序。特别注意上述哪些操作应该是`handle_call`或`handle_cast`。
+
+4.5 总结
+
+当我第一次学习GenServer时，我需要接受很多信息——这还是轻描淡写的说法。下面的表格可以帮助你将所有相关的函数分组在一起。
+
+我缩写了一些函数名，将`Metex.Worker`缩写为`MW`，将`GenServer`缩写为`GS`。`state`被缩短为`st`，`from`被缩短为`fr`。最后，`pid`是`p`。
+
+表4.2 客户端API、GenServer和回调函数之间关系的总结
+
+|Metex.Worker 客户端API | GenServer | Metex.Worker 回调|
+| --- | --- | --- |
+|`MW.start_link(:ok)`|`GS.start_link`|`MW.init(:ok)`|
+|`MW.get_temp(p,“NY”)`|`GS.call(p,{:loc,“NY”})`|`MW.handle_call(``{:loc, “NY”}, fr, st)`|
+|`MW.reset(p)`|`GS.cast(p, :reset)`|`MW.handle_cast(:reset, st)`|
+|`MW.stop(p)`|`GS.cast(p, :stop)`|`MW.handle_cast(:stop, st)`|
+||| 如果上述返回`{:stop, :normal, st}`|
+||| 那么
+||| `MW.terminate(:normal, st)` 将被调用 |
+
+让我们看一下最后一行。假设我想停止工作进程，我调用`Metex.Worker.stop/1`。这将反过来调用`GenServer.cast/2`，传入`pid`和`:stop`作为参数。触发的回调将是`Metex.Worker.handle_cast(:stop, state)`。如果回调返回一个形如`{:stop, :normal, state}`的元组，那么就会调用`Metex.Worker.terminate/2`。
+
+在本章中，我们涵盖了很多内容。以下是一些重点：
+
+- OTP是什么，以及其背后的原则和动机
+- 可用的不同类型的OTP行为
+- 将Metex转换为使用GenServer
+- GenServer提供的各种回调
+- 在GenServer中管理状态
+- 按照约定结构化你的代码
+- 进程注册
+
+还有一个好处，我一直故意没有告诉你。使用GenServer行为可以让你将GenServers放入一个监督树中。如果你的GenServer崩溃了会发生什么？它将如何影响你系统的其他部分，你如何确保你的系统保持功能？
+
+请继续阅读，亲爱的读者，因为接下来是监督器——这恰好是我最喜欢的OTP特性之一！
 
 
 
