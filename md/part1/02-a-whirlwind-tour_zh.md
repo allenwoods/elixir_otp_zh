@@ -1,418 +1,322 @@
-# 2   A Whirlwind Tour
+# 1 快速入门
 
+本章内容包括：
 
-This chapter covers:
+- 第一个Elixir程序
+- 使用交互式Elixir（iex）
+- 数据类型
+- 模式匹配
+- 列表与递归
+- 模块与函数
+- 管道（|>）运算符
+- Erlang互操作性
 
+我认为，与其深入每个语言特性，不如通过一系列示例来呈现它们。对于对Java或Ruby程序员来说可能陌生的概念，我会进行更多的阐述。对于某些概念，您可能可以从您已知的任何语言中找到相似之处。这些示例会逐渐变得更有趣，几乎展示了理解本书中Elixir代码所需的所有内容。
 
-·      Your first Elixir program
+## 1.1 设置环境
 
+Elixir在所有主流编辑器上都得到了很好的支持，比如Vim、Emacs、Spacemacs、Atom、IntelliJ和Visual Studio，仅举几例。专门为Emacs/Spacemacs与Elixir集成开发的Alchemist[[1]](#uRD9OOhUuHjWvTh2WNVJTqC)，提供了极佳的开发体验。它具有诸如文档查找、智能代码补全、与`iex`和`mix`的集成等众多有用的功能。与其他编辑器集成相比，它是支持最广泛、功能最丰富的。
 
-·      Using Interactive Elixir (iex)
+准备好你的终端和编辑器，因为快速入门之旅现在就开始。
 
+## 2.2 第一步
 
-·      Data Types
+让我们从简单的开始。由于我曾经的殖民统治者（我来自新加坡），我对英尺、英寸及其亲戚们的度量单位不太熟悉。我们将编写一个长度转换器来解决这个问题。
 
+以下是我们如何在Elixir中定义长度转换器的方法。输入以下内容到你最喜欢的文本编辑器中，并将文件保存为 `length_converter.ex`。
 
-·      Pattern Matching
+**清单 2.1 Elixir中的长度转换程序。保存为 length_converter.ex。**
 
+```elixir
+defmodule MeterToFootConverter do
+  def convert(m) do
+    m * 3.28084
+  end
+end
+```
 
-·      List and Recursion
+`defmodule` 定义一个新模块（即 `MeterToFootConverter`），而 `def` 定义一个新函数（即 `convert`）。
 
+### 2.2.1 在交互式Elixir中运行Elixir程序
 
-·      Modules and Functions
+`iex`，或简称交互式Elixir，相当于Ruby中的 `irb` 或NodeJS中的 `node`。在你的终端中，使用文件名作为参数启动 `iex`。
 
+**清单 2.2 运行长度转换程序（交互式Elixir）**
 
-·      The Pipe (|>) operator
+```
+% iex length_converter.ex
 
+Interactive Elixir (0.13.0) - 按 Ctrl+C 退出（输入 h() ENTER 获取帮助）iex(1)>
+```
 
-·      Erlang Interoperability
+世界上最高的男人的记录是2.72米。那是多少英尺？让我们找出答案：
 
+```
+iex> MeterToFeetConverter.convert(2.72)
+```
 
-Instead of going in-depth into each language feature, I thought it would be better to present them as a series of examples.  I will elaborate more when we come to concepts that might seem unfamiliar to, say, a Java or Ruby programmer. For certain concepts, you can probably draw parallels from whatever languages you already know. Each of these examples will get progressively more fun, and highlight almost everything you need to understand the Elixir code in this book.
+结果是
 
+```
+8.9238848
+```
 
-## 2.1           Setting Up Your Environment
+### 2.2.2 停止Elixir程序
 
+有几种方法可以停止Elixir程序，或者如果你想退出iex。第一种方法是输入 `Ctrl + C`。第一次这样做时，你会看到：
 
-Elixir is pretty much supported on all the major editors such as Vim, Emacs, Spacemacs, Atom, IntelliJ and Visual Studio, just to name a few. The aptly named Alchemist[[1]](#uRD9OOhUuHjWvTh2WNVJTqC), the Elixir tooling integration that works with Emacs/Spacemacs provides for an excellent developer experience. It features things like documentation lookup, smart code completion, integration with
-`iex`
-and
-`mix`
-and a ton of other useful features. It is by far the most supported and feature-rich compared with the rest of the editor integration.
+**清单 2.3 在iex中停止运行的Elixir程序（交互式Elixir）**
 
+```bash
+BREAK: (a)bort (c)ontinue (p)roc info (i)nfo (l)oaded
+(v)ersion (k)ill (D)b-tables (d)istribution
+```
 
-Get your terminal and editor ready, because the whirlwind tour begins now.
+你可以选择 `a)` 输入 `a` 来中止，或者 `b)` 再次输入 `Ctrl + C`。另一种选择是使用 `System.halt`，虽然我个人更喜欢 `Ctrl + C`。
 
+### 2.2.3 获取帮助
 
-## 2.2           First Steps
-
-
-Let's begin with something simple. Due to my former colonial masters (I'm from Singapore), I am woefully unfamiliar with measurements in feet, inches and its cousins. We are going to write a length converter to remedy that.
-
-
-Here is how we could define the length converter in Elixir. Enter the following into your favorite text editor and save the file as
-`length_converter.ex`.
-
-
-**Listing 2.1 The length converter program in Elixir. Save this as length\_converter.ex.**
-
-`defmodule MeterToFootConverter do`
-`def convert(m) do`
-`m * 3.28084`
-`end``end`
-`defmodule`
-defines a new module (i.e.
-`MeterToFootConverter`) and
-`def`
-defines a new function (i.e.
-`convert`).
-
-
-### 2.2.1        Here Running an Elixir program in Interactive Elixir
-
-
-`iex`, or Interactive Elixir for short, is the equivalent of
-`irb`
-in Ruby or
-`node`
-in NodeJS. In your terminal, launch
-`iex`
-with the file name as the argument.
-
-
-Listing 2.2 Running the length converter program (Interactive Elixir)
-
-`% iex length_converter.ex`
-
-`Interactive Elixir (0.13.0) - press Ctrl+C to exit (type h() ENTER for help)``iex(1)>`
-The record for the tallest man in the world is 2.72 m. What is that in feet? Let's find out:
-
-`iex> MeterToFeetConverter.convert(2.72)`
-gives
-
-`8.9238848`
-2.2.2        Stopping an Elixir program
-
-
-There are a few ways to stop an Elixir program, or if you want to exit iex. The first way is typing
-`Ctrl + C`. The first time you do this, you will see:
-
-
-Listing 2.3 Stopping a running Elixir program in iex (Interactive Elixir)
-
-`BREAK: (a)bort (c)ontinue (p)roc info (i)nfo (l)oaded`
-`(v)ersion (k)ill (D)b-tables (d)istribution`
-You could either a) type
-`a`
-to abort, or b) type
-`Ctrl + C`
-again. An alternative would be to use
-`System.halt`, although personally I’m more of a
-`Ctrl + C`
-person.
-
-
-2.2.3        Getting Help
-
-
-Since
-`iex`
-is your primary tool for interacting with Elixir, it pays to learn a bit more about it. In particular,
-`iex`
-features a pretty sweet built-in documentation system. Fire up
-`iex`
-again. Let's say you wanted to learn about the
-`Dict`
-module. You would type
-`h Dict`
-in
-`iex`
-and the output will be similar to figure 2.3.
-
+由于 `iex` 是与Elixir交互的主要工具，因此学习更多关于它的信息是很有价值的。特别是，`iex` 有一个非常棒的内置文档系统。再次启动 `iex`。假设你想了解 `Dict` 模块。你可以在 `iex` 中输入 `h Dict`，输出将类似于图2.3。
 
 ![](../Images/2_3.png)  
 
+图 2.3 在iex中显示的Dict模块文档。
 
-
-Figure 2.3 Documentation of the Dict module displayed in iex.
-
-
-What are the available functions of
-`Dict`? Type
-`Dict.`
-(the dot is important!) followed by your
-`<Tab>`
-key. You will see a list of functions available in the
-`Dict`
-module as shown in figure 2.4.
-
+`Dict` 有哪些可用的函数？输入 `Dict.`（重要的是后面的点！），然后按你的 `<Tab>` 键。你将看到 `Dict` 模块中可用的函数列表，如图2.4所示。
 
 ![](../Images/2_4.png)  
 
+图 2.4 `Dict` 模块中可用的函数列表。
 
-
-Figure 2**.**4 A list of functions available in the
-`Dict`
-module.
-
-
-Now, let’s say you want to learn more about the
-`put/3`
-function. I will explain what the
-`/3`
-means later. For now, it just means that this version of
-`put`
-accepts 3 arguments. In
-`iex`, type
-`h Dict.put/3.`
-The output will look like figure 2.5:
-
+现在，假设你想了解更多关于 `put/3` 函数。我稍后会解释 `/3` 是什么意思。现在，它只意味着这个版本的 `put` 接受3个参数。在 `iex` 中，输入 `h Dict.put/3`。输出看起来像图2.5：
 
 ![](../Images/2_5.png)  
 
+图 2.5 `Dict.put/3` 的文档。
 
+相当整洁，对吧？更好的是，文档还有美观的语法高亮。
 
-Figure 2.5 Documentation of
-`Dict.put/3`.
+## 2.3 数据类型
 
+在本书中，我们将使用以下常见数据类型：
 
-Pretty neat, eh? What's even better is that the documentation is beautifully syntax-highlighted.
+- 模块（Modules）
+- 函数（Functions）
+- 数字（Numbers）
+- 字符串（Strings）
+- 原子（Atoms）
+- 元组（Tuples）
+- 映射（Maps）
 
+### 2.3.1 模块、函数和函数子句
 
-2.3           Data Types
+模块是Elixir用于将函数组合在一起的方式。模块的例子包括`List`、`String`，当然还有`MeterToFootConverter`。使用`defmodule`创建模块。同样，使用`def`创建函数。
 
+#### 模块
 
-Here are the common data types we will use in this book:
+让我们编写另一个函数，将米转换为*英寸*。根据我们当前的实现，我们需要做一些更改。首先，我们的模块名*太具体*了。让我们将其更改为更通用的名称。这是我们的`length_converter.ex`：
 
+```elixir
+defmodule MeterToLengthConverter do
+# ...
+end
+```
 
-·      Modules
+更有趣的是，我们如何添加一个将米转换为英寸的函数？这是一种*可能的*方法：
 
+##### 列表 2.4 defmodules可以嵌套
 
-·      Functions
+```elixir
+defmodule MeterToLengthConverter do
+  defmodule Feet do
+    def convert(m) do
+      m * 3.28084
+    end
+  end
 
+  defmodule Inch do
+    def convert(m) do
+      m * 39.3701
+    end
+  end
+end
+```
 
-·      Numbers
+现在，您可以计算最高的男人的身高（以英寸为单位）：
 
+##### 列表 2.5 使用点表示法（交互式Elixir）
 
-·      Strings
+```elixir
+iex> MeterToLengthConverter.Inch.convert(2.72)
+```
 
-
-·      Atoms
-
-
-·      Tuples
-
-
-·      Maps
-
-
-2.3.1        Modules, Functions and Function Clauses
-
-
-Modules are Elixir's way of grouping functions together. Examples of modules are
-`List`,
-`String`, and of course,
-`MeterToFootConverter`. A module is created using
-`defmodule`. Similarly, functions are created using
-`def`.
-
-
-Modules
-
-
-Just for kicks, let's write another function to convert meters into *inches*. Given our current implementation, we need to make a few changes. Firstly, our module name is *too specific*. Let's change that to something more general. Here is our
-`length_converter.ex`
-again:
-
-`defmodule MeterToLengthConverter do`
-`# ...``end`
-More interestingly, how would we add a function that converts from meters to inches? Here is one *possible* approach:
-
-
-Listing 2.4  defmodules can be nested
-
-`defmodule MeterToLengthConverter do`
-`defmodule Feet do`
-`def convert(m) do`
-`m * 3.28084`
-`end`
-`end`
-
-`defmodule Inch do`
-`def convert(m) do`
-`m * 39.3701`
-`end`
-`end``end`
-Now, you can compute the height of the tallest man in inches:
-
-
-Listing 2.5  Using the dot notation (Interactive Elixir)
-
-`iex> MeterToLengthConverter.Inch.convert(2.72)`
-Returns
+返回
 
 `107.08667200000001`
-This example illustrates that modules can be nested. Here, the modules
-`Feet`
-and
-`Inch`
-are nested within
-`MeterToLengthConverter`. To access a function in a nested module, the *dot notation* is used. In general, to invoke functions in Elixir, the following format is used:
 
-`Module.function(arg1, arg2, ...)`
-On mailing lists, this is sometimes known as "**MFA**". It stands for **M**odule, **F**unction and **A**rguments. Remember this format, because you will encounter them again in the book.
+这个例子说明了模块可以嵌套。这里，模块`Feet`和`Inch`嵌套在`MeterToLengthConverter`内。要访问嵌套模块中的函数，使用*点表示法*。通常，要在Elixir中调用函数，使用以下格式：
 
+```elixir
+Module.function(arg1, arg2, ...)
+```
 
-You can also flatten the module hierarchy like so:
+在邮件列表中，这有时被称为“**MFA**”。它代表**模块（Module）**、**函数（Function）**和**参数（Arguments）**。记住这种格式，因为您将在本书中再次遇到它。
 
+您还可以像这样扁平化模块层次结构：
 
-Listing 2.6 Flattening the module hierarchy (Interactive Elixir)
+##### 列表 2.6 扁平化模块层次结构（交互式Elixir）
 
-`defmodule MeterToLengthConverter.Feet do #1`
-`def convert(m) do`
-`m * 3.28084`
-`end`
-`end`
+```elixir
+defmodule MeterToLengthConverter.Feet do #1
+  def convert(m) do
+    m * 3.28084
+  end
+end
 
-`defmodule MeterToLengthConverter.Inch do #1`
-`def convert(m) do`
-`m * 39.3701`
-`end``end`
-#1 You can use the dot notation to specify a nested hierarchy
+defmodule MeterToLengthConverter.Inch do #1
+  def convert(m) do
+    m * 39.3701
+  end
+end
+```
 
+#1 您可以使用点表示法来指定嵌套层次结构
 
-You would call the function exactly the same way as Listing 2.5.
+您将以与列表 2.5 完全相同的方式调用该函数。
 
+#### 函数和函数子句
 
-Functions and Function clauses
+编写长度转换器的更习惯的方式是使用函数子句。这是我们长度转换器的修订版本：
 
+```elixir
+defmodule MeterToLengthConverter do
+  def convert(:feet, m) do
+    m * 3.28084
+  end
 
-There is a more idiomatic way of writing our length converter, and that is using function clauses. Here is a revised version of our length converter:
+  def convert(:inch, m) do
+    m * 39.3701
+  end
+end
+```
 
-`defmodule MeterToLengthConverter do`
-`def convert(:feet, m) do`
-`m * 3.28084`
-`end`
+定义一个函数相当直接。大多数函数都是这样写的：
 
-`def convert(:inch, m) do`
-`m * 39.3701`
-`end``end`
-Defining a function is pretty straightforward. Most functions are written like this:
+```elixir
+def convert(:feet, m) do
+  m * 3.28084
+end
+```
 
-`def convert(:feet, m) do`
-`m * 3.28084``end`
-Single-lined functions are written like so:
+单行函数这样写：
 
-`def convert(:feet, m), do: m * 3.28084`
-While we are at it, let’s add another function to convert meters to *yards*, this time, using the single-lined variety:
+```elixir
+def convert(:feet, m), do: m * 3.28084
+```
 
-`defmodule MeterToLengthConverter do`
-`def convert(:feet, m), do: m * 3.28084`
-`def convert(:inch, m), do: m * 39.3701`
-`def convert(:yard, m), do: m * 1.09361``end`
-Functions are referred to by their *arity* – the number of arguments it takes in. Therefore, we refer to the above function as
-`convert/2`.
-`convert/2`
-is an example of a *named function*. Elixir also has the notion of *anonymous functions*. Here is a common example of an anonymous function:
+既然我们提到了，让我们再添加一个将米转换为*码*的函数，这次使用单行变体：
 
+```elixir
+defmodule MeterToLengthConverter do
+  def convert(:fe
 
-Listing 2.7: Second argument is an anonymous function (Interactive Elixir)
+et, m), do: m * 3.28084
+  def convert(:inch, m), do: m * 39.3701
+  def convert(:yard, m), do: m * 1.09361
+end
+```
 
-`iex> Enum.map [1, 2, 3], fn x -> x*x end`
-gives
+函数按其*元数*（它接受的参数数量）来引用。因此，我们将上述函数称为`convert/2`。`convert/2`是*命名函数*的一个例子。Elixir还有*匿名函数*的概念。这是一个匿名函数的常见例子：
+
+##### 列表 2.7：第二个参数是一个匿名函数（交互式Elixir）
+
+```elixir
+iex> Enum.map [1, 2, 3], fn x -> x*x end
+```
+
+给出
+
 `[1, 4, 9].`
 
+我们可以定义具有相同名称的多个函数，就像我们的示例中那样。需要注意的重要一点是它们*必须*被分组在一起。因此，这是不好的形式：
 
-We can define a function with the same name multiple times, just as in our example. The important thing to notice is they *must* be grouped together. Therefore, this is bad form:
+##### 列表 2.8：始终将相似的函数子句分组在一起。
 
+```elixir
+defmodule MeterToLengthConverter do
+  def convert(:feet, m), do: m * 3.28084
+  def convert(:inch, m), do: m * 39.3701
+  def i_should_not_be_here, do: IO.puts "Oops" #1
+  def convert(:yard, m), do: m * 1.09361
+end
+```
 
-Listing 2.8: Always group similar function clauses together.
+#1 不要这样做！
 
-`defmodule MeterToLengthConverter do`
-`def convert(:feet, m), do: m * 3.28084`
-`def convert(:inch, m), do: m * 39.3701`
-`def i_should_not_be_here, do: IO.puts "Oops" #1`
-`def convert(:yard, m), do: m * 1.09361``end`
-#1 Do not do this!
+Elixir会相应地抱怨：
+##### 列表 2.10：当函数子句未分组在一起时，Elixir会抱怨。
 
+```elixir
+% iex length_converter.ex
+length_converter.ex:5: warning: clauses for the same def should be grouped together, def convert/2 was previously defined
+```
 
-And Elixir would complain accordingly:
+另一个重要的事情：顺序很重要。每个函数子句都是自上而下匹配的。这意味着一旦Elixir找到一个兼容的函数子句匹配，它就会停止搜索并执行该函数。对于我们当前的长度转换器，移动函数子句不会影响任何事情。当我们稍后探讨递归时，您将开始理解函数子句顺序为何重要。
 
+### 2.3.2 数字（Numbers）
 
-Listing 2.10:  Elixir complains when function clauses are not grouped together.
+在 Elixir 中，数字的运作方式和传统编程语言中的类似。
 
-`% iex length_converter.ex`
-`length_converter.ex:5: warning: clauses for the same def should be grouped together,``def convert/2 was previously defined`
-Another important thing: Order matters. Each function clause is matched in a top down fashion. This means that once Elixir finds a compatible function clause that matches, it will stop searching and execute that function. For our current length converter, moving function clauses around will not affect anything. When we explore recursion later, you will begin to appreciate why ordering of function clauses matter.
-
-
-### 2.3.2        Numbers
-
-
-Numbers in Elixir work much like how you would expect from traditional programming languages.
-
-
-**Listing 2.13:  Operating on  an integer, a hexadecimal, and a float (Interactive Elixir)**
+**清单 2.13：操作整数、十六进制数和浮点数（交互式 Elixir）**
 
 `iex> 1 + 0x2F / 3.0`
 `16.666666666666664`
-**Listing 2.14:  Division and remainder functions (Interactive Elixir)**
+
+**清单 2.14：除法和余数函数（交互式 Elixir）**
 
 `iex> div(10,3)`
 `3`
 
-`iex> rem(10,3)``1`
+`iex> rem(10,3)`
+`1`
 
-### 2.3.3        Strings
+### 2.3.3 字符串（Strings）
 
+Elixir 中的字符串有两种形态。表面上看，字符串看起来很标准。这里有一个展示字符串插值的例子：
 
-Strings in Elixir lead two lives. On the surface, strings look like the pretty standard. Here is an example that demonstrates string interpolation:
+**清单 2.15：Elixir 支持字符串插值（交互式 Elixir）**
 
+`iex(1)> "字符串是 #{:great}！"`
+将给出：
 
-**Listing 2.15:  Elixir has string interpolation support (Interactive Elixir)**
+`"字符串是 great！"`
+我们还可以对字符串执行各种操作：
 
-`iex(1)> "Strings are #{:great}!"`
-Will give you:
+**清单 2.16：对字符串的操作（交互式 Elixir）**
 
-`"Strings are great!"`
-We can also perform various operations on strings:
+`iex(2)> "字符串是 #{:great}！" |> String.upcase |> String.reverse`
+这将返回：
 
+`"！TAERG 是 字符串"`
+字符串是二进制数据（Binaries）
 
-**Listing 2.16:  Operating on strings (Interactive Elixir)**
+如何测试一个字符串？没有 `is_string/1` 函数可用。这是因为在 Elixir 中，字符串是一种**二进制数据**。二进制数据只是一个字节序列。
 
-`iex(2)> "Strings are #{:great}!" |> String.upcase |> String.reverse`
-This returns:
+清单 2.17：字符串是二进制数据（交互式 Elixir）
 
-`"!TAERG ERA SGNIRTS"`
-Strings are Binaries
+`iex(3)> "字符串是二进制数据" |> is_binary`
+返回
+`true。`
 
+展示字符串的二进制表示的一种方式是使用二进制串联运算符 `<>` 来附加一个空字节，`<<0>>`：
 
-How do you test for a string? There isn’t an
-`is_string/1`
-function available. That’s because a string in Elixir is a **binary**. A binary is just a sequence of bytes.
-
-
-Listing 2.17: Strings are Binaries (Interactive Elixir)
-
-`iex(3)> "Strings are binaries" |> is_binary`
-returns
-`true.`
-
-
-One way to show the binary representation of a string is to use the binary concatenation operator
-`<>`
-to attach a null byte,
-`<<0>>`:
-
-
-Listing 2.18: Displaying the binary representation of a String (Interactive Elixir)
+清单 2.18：展示字符串的二进制表示（交互式 Elixir）
 
 `iex(4)> "ohai" <> <<0>>`
-returns
-`<<111, 104, 97, 105, 0>>.`
+返回
+`<<111, 104, 97, 105, 0>>。`
 
-
-Each individual number presents a character:
+每个数字代表一个字符：
 
 `iex(5)> ?o`
 `111`
@@ -423,672 +327,528 @@ Each individual number presents a character:
 `iex(7)> ?a`
 `97`
 
-`iex(8)> ?i``105`
-To further convince yourself that the binary representation is equivalent:
+`iex(8)> ?i`
+`105`
+为了进一步确信二进制表示与原字符串等价：
 
 `iex(44)> IO.puts <<111, 104, 97, 105>>`
-Gives you back the original string:
+将给你原始字符串：
 `ohai`
 
+字符串不是字符列表（Char lists）
 
-Strings are NOT Char lists
+顾名思义，字符列表是字符的列表。它与字符串是完全不同的数据类型，这可能会有些混淆。虽然字符串总是用双引号括起来，字符列表则用单引号括起来。
 
-
-Char lists, as its name suggests, is a list of characters. It is an entirely different data type from strings, and this can be quite confusing. While strings are always enclosed in double quotes, char lists are enclosed in single quotes.
-
-
-**Listing 2.19:  Strings are not char lists (Interactive Elixir)**
+**清单 2.19：字符串不是字符列表（交互式 Elixir）**
 
 `iex(9)> 'ohai' == "ohai"`
-Will give you false. You usually will not use char lists, at least in Elixir. However, when talking to some Erlang libraries, you would have to. For example, in a later example, the Erlang http client (httpc) accepts a char list as the URL:
+将给出 false。你通常不会使用字符列表，至少在 Elixir 中不会。然而，当与某些 Erlang 库交互时，你可能需要这样做。例如，在后面的示例中，Erlang 的 http 客户端（httpc）接受字符列表作为 URL：
 
 `:httpc.request 'http://www.elixir-lang.org'`
-What happens if we passed in a string (binary) instead? Try it out:
+如果我们传入字符串（二进制数据）会发生什么呢？试试看：
 
-
-**Listing 2.20: httpc.request/1 expects a char list as the URL type (Interactive Elixir)**
+**清单 2.20：httpc.request/1 期望 URL 类型为字符列表（交互式 Elixir）**
 
 `iex(51)> :httpc.request "http://www.elixir-lang.org"`
-`** (ArgumentError) argument error`
+`** (ArgumentError) 参数错误`
 `:erlang.tl("http://www.elixir-lang.org")`
 `(inets) inets_regexp.erl:80: :inets_regexp.first_match/3`
 `(inets) inets_regexp.erl:68: :inets_regexp.first_match/2`
 `(inets) http_uri.erl:186: :http_uri.split_uri/5`
 `(inets) http_uri.erl:136: :http_uri.parse_scheme/2`
-`(inets) http_uri.erl:88: :http_uri.parse/2``(inets) httpc.erl:162: :httpc.request/5`
-We will cover calling Erlang libraries further along the chapter, but this is something you need to keep at the back of your head when you are dealing with certain Erlang libraries.
+`(inets) http_uri.er
+
+l:88: :http_uri.parse/2`
+`(inets) httpc.erl:162: :httpc.request/5`
+我们将在本章后面进一步讨论调用 Erlang 库的内容，但当你处理某些 Erlang 库时，这是你需要记在脑后的事情。
 
 
-### 2.3.4        Atoms
+### 2.3.4 原子 (Atoms)
 
+原子在Elixir中作为常量存在，有点类似于Ruby中的符号。原子总是以冒号开始。创建原子有两种不同的方式：`:hello_atom`和`:”Hello Atom”`都是有效的原子。需要注意的是，原子和字符串并不相同，因为原子和字符串是完全不同的数据类型。
 
-Atoms serve as constants, something akin to Ruby's symbols. Atoms always start with a colon. There are 2 different ways to create atoms: Both
-`:hello_atom`
-and
-`:”Hello Atom”`
-are valid atoms. Atoms are *not* the same as strings, since atoms and strings are completely separate data types:
-
-
-**Listing 2.22: Atoms are not strings! (Interactive Elixir)**
+**清单 2.22: 原子不是字符串！(交互式Elixir)**
 
 `iex> :hello_atom == "hello_atom"`
 `false`
-On its own, atoms are not very interesting. However, when we place atoms into *tuples*, and use them in the context of *pattern matching*, you will begin to understand the role of atoms and how Elixir exploits atoms to write declarative code. We will get to pattern matching in a few sections later. For now, let’s turn our attention to tuples.
+单独来看，原子并不是非常有趣。然而，当我们将原子放入*元组*中，并在*模式匹配*的上下文中使用它们时，你就会开始理解原子的作用以及Elixir如何利用原子编写声明性代码。我们将在后面几节中讨论模式匹配。现在，让我们转向元组。
 
+### 2.3.5 元组 (Tuples)
 
-### 2.3.5        Tuples
-
-
-A tuple can contain different types of data. For example, a HTTP client might return a successful request in the form of a tuple such as:
+一个元组可以包含不同类型的数据。例如，一个HTTP客户端可能以元组的形式返回一个成功的请求：
 
 `{200, “http://www.elixir-lang.org”}`
-Here is how the result of an unsuccessful request might look like:
+一个失败的请求可能看起来像这样：
 
 `{404, “http://www.php-is-awesome.org”}`
-Tuples use zero-based access, just like how you would access array elements in most programming languages. Therefore, if you wanted the URL of the request result, you need pass in
+元组使用基于零的访问方式，就像在大多数编程语言中访问数组元素一样。因此，如果你想要获取请求结果的URL，你需要传入
 `1`
-to
-`elem/2`:
+给
+`elem/2`：
 
-
-**Listing 2.24:  Accessing the second element in a tuple (Interactive Elixir)**
+**清单 2.24: 访问元组中的第二个元素 (交互式Elixir)**
 
 `iex> elem({404, “http://www.php-is-awesome.org”}, 1)`
-which will return
+这将返回
 `http://www.php-is-awesome.org.`
 
+你可以使用`put_elem/3`来更新一个元组：
 
-You can update a tuple using
-`put_elem/3`:
-
-
-Listing 2.25: Updating a tuple (Interactive Elixir)
+清单 2.25: 更新一个元组 (交互式Elixir)
 
 `iex> put_elem({404, “http://www.php-is-awesome.org”}, 0, 503)`
-returns
+返回
 
 `{503, "http://www.php-is-awesome.org"}`
 
-### 2.3.6        Maps
+### 2.3.6 映射 (Maps)
 
+映射本质上是键值对，类似于哈希或字典，具体取决于你所使用的语言。所有映射操作都通过`Map`模块暴露。
 
-Maps are essentially key-value pairs, like a hash or dictionary, depending on the language.  All map operations are exposed with the
-`Map`
-module.
+使用映射相当直接，有一个*小*注意点。看看你是否能在例子中发现它。让我们从一个空映射开始：
 
-
-Working with maps is pretty straightforward, with a *tiny* caveat. See if you can spot it in the examples. Let's start with an empty map:
-
-
-**Listing 2.26: Creating a new Map**
+**清单 2.26: 创建一个新的映射**
 
 `iex> programmers = Map.new`
 `%{}`
-Let's add some smart people into the map:
+让我们向映射中添加一些聪明的人：
+
+**清单 2.27: 向映射中添加元素**
+```elixir
+iex> programmers = Map.put(programmers, :joe, "Erlang")
+%{joe: "Erlang"}
+iex> programmers = Map.put(programmers, :matz, "Ruby")
+%{joe: "Erlang", matz: "Ruby"}
+iex> programmers = Map.put(programmers, :rich, "Clojure")
+%{joe: "Erlang", matz: "Ruby", rich: "Clojure"}
+```
 
 
-**Listing 2.27: Adding elements to a Map**
+一个非常重要的旁白：不可变性 (Immutability)
 
-`iex> programmers = Map.put(programmers, :joe, "Erlang")`
-`%{joe: "Erlang"}`
+注意到`programmers`是`Map.put/3`的一个参数，并且*重新绑定*到`programmers`上。为什么会这样？
 
-`iex> programmers = Map.put(programmers, :matz, "Ruby")`
-`%{joe: "Erlang", matz: "Ruby"}`
+```elixir
+iex> Map.put(programmers, :rasmus, "PHP")
+%{joe: "Erlang", matz: "Ruby", rasmus: "PHP", rich: "Clojure"}
+```
+返回值包含了新的条目。让我们检查一下`programmers`的内容：
 
-`iex> programmers = Map.put(programmers, :rich, "Clojure")``%{joe: "Erlang", matz: "Ruby", rich: "Clojure"}`
+```elixir
+iex> programmers
+%{joe: "Erlang", matz: "Ruby", rich: "Clojure"}
+```
 
-A very important aside: Immutability
+这个属性被称为*不可变性*。
 
+Elixir中的**所有**数据结构都是不可变的，这意味着你无法对其进行任何修改。你所做的任何修改*总是*保留原始结构*不变*。相反，返回一个修改过的副本。因此，为了捕获结果，你可以将其重新绑定到同一个变量名，或者将值绑定到另一个变量上。
 
+## 2.4 守卫 (Guards)
 
-Notice how
-`programmers`
-is one of the arguments to
-`Map.put/3`, and is *rebound* to
-`programmers`
-again. Why is that?
+让我们再次看看 `length_converter.ex`。假设我想确保参数始终是数字。我们可以通过添加守卫子句来修改程序：
 
-`iex> Map.put(programmers, :rasmus, "PHP")`
-`%{joe: "Erlang", matz: "Ruby", rasmus: "PHP", rich: "Clojure"}`
-The return value contains the new entry. Let's check the contents of
-`programmers`:
+清单 2.29: 为额外检查添加守卫。
 
-`iex> programmers`
-`%{joe: "Erlang", matz: "Ruby", rich: "Clojure"}`
-This property is called *immutability*.
+```elixir
+defmodule MeterToLengthConverter do
+  def convert(:feet, m) when is_number(m), do: m * 3.28084 #1
+  def convert(:inch, m) when is_number(m), do: m * 39.3701 #1
+  def convert(:yard, m) when is_number(m), do: m * 1.09361 #1
+end
+```
+#1 在函数子句中添加守卫。
 
+所以现在，如果你尝试像 `MeterToLengthConverter.convert(:feet, "smelly")` 这样有趣的事情，没有任何函数子句会匹配。实际上，Elixir会抛出一个 `FunctionClauseError`：
 
-*All* data structures in Elixir are immutable, which means you cannot do any modifications to it. Any modifications you make will *always* leave the original *unchanged*. Instead, a modified copy is returned. Therefore, in order to capture the result, you can either re-bind it to the same variable name, or bind the value to another variable.
+**清单 2.30: 尝试执行上述代码会导致 FunctionClauseError**
 
-
-
- 
-
-
-
-## 2.4           Guards
-
-
-Let's look at
-`length_converter.ex`
-once more. Let’s say I want to ensure that the arguments are always numbers. Here can modify the program by adding guard clauses:
-
-
-Listing 2.29: Guards added for additional checks.
-
-`defmodule MeterToLengthConverter do`
-`def convert(:feet, m) when is_number(m), do: m * 3.28084 #1`
-`def convert(:inch, m) when is_number(m), do: m * 39.3701 #1`
-`def convert(:yard, m) when is_number(m), do: m * 1.09361 #1``end`
-#1 Guards added to the function clause.
-
-
-So now, if you try something funny like
-`MeterToLengthConverter.convert(:feet, “smelly”)`, none of the function clauses will match. In fact, Elixir throws a
-`FunctionClauseError`:
-
-
-**Listing 2.30: Attempting to execute the above code results in a FunctionClauseError**
-
-`iex(1)> MeterToLengthConverter.convert (:feet, “smelly”)`
+```elixir
+iex(1)> MeterToLengthConverter.convert (:feet, “smelly”)
 (FunctionClauseError) no function clause matching in convert/2
+```
 
+负长度没有意义。让我们确保参数是非负的。我们可以通过添加另一个守卫表达式来实现这一点：
 
-Negative lengths make no sense. Let’s make sure the arguments are non-negative. We can do this by adding another guard expression:
+**清单 2.31: 我们可以在守卫中包含简单表达式。**
 
+```elixir
+defmodule MeterToLengthConverter do
+  def convert(:feet, m) when is_number(m) and m >= 0, do: m * 3.28084 #1
+  def convert(:inch, m) when is_number(m) and m >= 0, do: m * 39.3701 #1
+  def convert(:yard, m) when is_number(m) and m >= 0, do: m * 1.09361 #1
+end
+```
+#1 检查 m 是否为非负数
 
-**Listing 2.31:    We can include simple expressions in guards.**
+除了 `is_number/1`，当你需要区分不同的数据类型时，还有其他类似的函数会派上用场。要生成这个列表，启动 `iex`，然后输入 `is_` 后跟 `<Tab>` 键。
 
-`defmodule MeterToLengthConverter do`
-`def convert(:feet, m) when is_number(m) and m >= 0, do: m * 3.28084 #1`
-`def convert(:inch, m) when is_number(m) and m >= 0, do: m * 39.3701 #1`
-`def convert(:yard, m) when is_number(m) and m >= 0, do: m * 1.09361 #1``end`
-#1 Check that m is a non-negative number
+清单 2.32: 在 iex 中使用自动补全来发现函数名称（交互式 Elixir）
 
+```elixir
+iex(1)> is_
+is_atom/1         is_binary/1       is_bitstring/1    is_boolean/1
+is_float/1        is_function/1     is_function/2     is_integer/1
+is_list/1         is_map/1          is_nil/1          is_number/1
+is_pid/1          is_port/1         is_reference/1    is_tuple/1
+```
+`is_*` 函数应该是非常直观的，除了 `is_port/1` 和 `is_reference/1`。我们在这本书中不会使用端口。稍后我们会遇到引用，你将看到它们在为消息赋予唯一身份时是如何有用的。
 
-Besides
-`is_number/1`, there are also other similar functions that will come in handy when you need to differentiate between the various data types. To generate this list, fire up
-`iex`, and type
-`is_`
-followed by the
-`<Tab>`
-key.
+守卫子句在消除条件语句方面特别有用，正如你所猜测的，它们在确保你的参数是正确类型时也很有用。
 
+2.5 模式匹配
 
-Listing 2.32: Auto-completion in iex to discover function names (Interactive Elixir)
+模式匹配是函数式编程语言中最强大的功能之一，而Elixir也不例外。事实上，模式匹配是我最喜欢的Elixir功能之一。一旦你看到模式匹配能做什么，你就会开始渴望在不支持它们的语言中使用它们。
 
-`iex(1)> is_`
-`is_atom/1         is_binary/1       is_bitstring/1    is_boolean/1`
-`is_float/1        is_function/1     is_function/2     is_integer/1`
-`is_list/1         is_map/1          is_nil/1          is_number/1`
-`is_pid/1          is_port/1         is_reference/1    is_tuple/1`
-The
-`is_*`
-functions should be pretty self explanatory, except for
-`is_port/1`
-and
-`is_reference/1`. We won’t be using ports in this book. We will meet references later on, and you will see how they are useful in giving messages a unique identity.
+Elixir使用等号(`=`)来执行模式匹配。与大多数语言不同，Elixir不仅使用`=`操作符进行变量赋值。事实上，`=`被称为*匹配操作符*。从现在开始，当你看到一个`=`时，不要想它是等于，而是匹配。我们究竟在匹配什么呢？简而言之，模式匹配用于匹配值和数据结构。在接下来的示例中，你将了解为什么`=`被称为匹配操作符。更重要的是，你将学会爱上模式匹配，作为一种生成优美代码的强大工具。首先，让我们学习规则：
 
+### 2.5.1 `=` 用于赋值
 
-Guard clauses are especially useful in eliminating conditionals, and as you have guessed, useful in making sure that your arguments are of the correct type.
+匹配操作符的第一个规则是：变量赋值仅在变量位于表达式的*左*侧时发生。
 
-
-2.5           Pattern Matching
-
-
-Pattern matching is one of the most powerful features in functional programming languages, and Elixir is no exception. In fact, pattern matching is one of my favorite features in Elixir. Once you see what pattern matching can do, you will start to yearn for it in languages that do not support them.
-
-
-Elixir uses the equals operator (`=`) to perform pattern matching. Unlike most languages, Elixir not only uses the
-`=`
-operator for variable assignment. In fact,
-`=`
-is called the *match operator*. From now on, when you see a
-`=`, think *matches* instead of equals. What are we matching exactly? In short, pattern matching is used to match both values and data structures. In the examples that follow, you will learn why
-`=`
-is called the match operator. More importantly, you will learn to love pattern matching as a powerful tool to produce beautiful code. First, let’s learn the rules:
-
-
-### 2.5.1        = is used for assigning
-
-
-The first rule of the match operator is this: Variable assignments only happen when the variable is on the *left* hand side of the expression.
-
-
-Listing 2.33:  Variable assignments only occur when the variable is on the left. (Interactive Elixir)
+代码清单 2.33：变量赋值仅在变量位于左侧时发生。（交互式Elixir）
 
 `iex> programmers = Map.put(programmers, :jose, "Elixir")`
-Will result in:
+将产生：
 
 `%{joe: "Erlang", jose: "Elixir", matz: "Ruby", rich: "Clojure"}`
-Here, we assignment the result of
-`Map.put/2`
-into
-`programmers`. As expected,
-`programmers`
-contains:
+这里，我们将`Map.put/2`的结果赋值给了`programmers`。预期中，`programmers`包含：
 
-`iex> programmers`
-`%{joe: "Erlang", jose: "Elixir", matz: "Ruby", rich: "Clojure"}`
-### 2.5.2        = is also used for matching
+```elixir
+iex> 程序员
+%{joe: "Erlang", jose: "Elixir", matz: "Ruby", rich: "Clojure"}
+```
 
 
-Here is when things get slightly interesting. Let’s swap the order of the previous expression we had:
+### 2.5.2 `=` 也用于匹配
 
+现在事情变得稍微有趣一些。让我们交换一下我们之前的表达式顺序：
 
-Listing 2.34: Matching the map (on the left) with
-`programmers`
-(Interactive Elixir)
+代码清单 2.34：匹配地图（在左侧）与`programmers`（交互式Elixir）
+```elixir
+iex> %{joe: "Erlang", jose: "Elixir", matz: "Ruby", rich: "Clojure"} = programmers
+%{joe: "Erlang", jose: "Elixir", matz: "Ruby", rich: "Clojure"}
+```
+在这里，我们调换了顺序。注意这*不是*一个赋值。相反，发生了一次*成功的模式匹配*，因为左侧的内容和`programmers`是相同的。让我们看一个*不成功*的模式匹配：
 
-`iex> %{joe: "Erlang", jose: "Elixir", matz: "Ruby", rich: "Clojure"} = programmers`
-`%{joe: "Erlang", jose: "Elixir", matz: "Ruby", rich: "Clojure"}`
-Here, we flipped things around. Notice how this is *not* an assignment. Instead, a *successful pattern match* has occurred, because the contents of both the left hand side and
-`programmers`
-are identical. Let's see an *unsuccessful* pattern match:
+代码清单 2.35：一个不成功的模式匹配（交互式Elixir）
 
+```elixir
+iex> %{tolkien: "Elvish"} = programmers
+** (MatchError) no match of right hand side value: %{joe: "Erlang", jose: "Elixir", matz: "Ruby", rich: "Clojure"}
+```
 
-Listing 2.35:  An unsuccessful pattern match (Interactive Elixir)
+当一个不成功的匹配发生时，会抛出一个`MatchError`。接下来我们来看看解构，因为我们需要用到它来执行一些模式匹配的酷炫技巧。
 
-`iex> %{tolkien: "Elvish"} = programmers`
-`** (MatchError) no match of right hand side value: %{joe: "Erlang", jose: "Elixir", matz: "Ruby", rich: "Clojure"}`
-When an unsuccessful match occurs, a
-`MatchError`
-is raised. Let’s take a look at destructuring next, because we will need this in order to perform some cool tricks with pattern matching.
+### 2.5.3 解构
 
+解构是模式匹配发挥作用的地方。*Common Lisp the Language* 中对解构最好的定义之一是：
 
-### 2.5.3        Destructuring
+解构允许你将一组变量绑定到相应的值集合，这可以在任何你能将一个值绑定到单个变量的地方进行。
 
+以下是代码中的意思：
 
-Destructuring is where pattern matching really shines. One of the nicest definitions of destructuring comes from *Common Lisp the Language*[[2]](#ugUVMuBAS4AjXQEz6xpJmzG):
+清单 2.36：将左侧的变量绑定到右侧的值（交互式Elixir）
 
+```elixir
+iex> %{joe: a, jose: b, matz: c, rich: d} =
+%{joe: "Erlang", jose: "Elixir", matz: "Ruby", rich: "Clojure"}
+```
 
-Destructuring allows you to *bind a set of variables* to a corresponding *set of values* anywhere that you can normally bind a value to a single variable.
+下面是每个变量的内容：
 
+```elixir
+iex> a
+"Erlang"
 
-Here is what it means in code:
+iex> b
+"Elixir"
 
+iex> c
+"Ruby"
 
-Listing 2.36: Binding variables on the left to values on the right (Interactive Elixir)
+iex> d
+"Clojure"
+```
 
-`iex> %{joe: a, jose: b, matz: c, rich: d} =`
-`%{joe: "Erlang", jose: "Elixir", matz: "Ruby", rich: "Clojure"}``%{joe: "Erlang", jose: "Elixir", matz: "Ruby", rich: "Clojure"}`
-Here are the contents of each of the variables:
+这里，我们将一组*变量*（`a`、`b`、`c` 和 `d`）绑定到相应的一组*值*（“Erlang”、 “Elixir”、 “Ruby” 和 “Clojure”）。如果你只对提取部分信息感兴趣怎么办？没问题，因为你可以进行模式匹配，而不需要指定整个模式：
 
-`iex> a`
-`"Erlang"`
+清单 2.37：仅匹配部分模式（交互式Elixir）
 
-`iex> b`
-`"Elixir"`
+```elixir
+iex> %{jose: most_awesome_language} = programmers
+%{joe: "Erlang", jose: "Elixir", matz: "Ruby", rich: "Clojure"}
+iex> most_awesome_language
+"Elixir"
+```
 
-`iex> c`
-`"Ruby"`
+这在你只对提取少量信息感兴趣时非常方便。这里是Elixir程序中经常使用的另一种有用技术。注意这两个表达式的返回值：
 
-`iex> d``"Clojure"`
-Here, we bind a set of *variables* (`a`,
-`b`,
-`c`
-and
-`d)`
-to a corresponding set of *values* (`“Erlang”`,
-`“Elixir”`,
-`“Ruby”`
-and
-`“Clojure”`). What if you were only interested in extracting some of the information? No problem, because you can do pattern-matching without needing to specify the entire pattern:
+清单 2.38：成功的提取返回 `{:ok, value}`（交互式Elixir）
 
+```elixir
+iex> Map.fetch(programmers, :rich)
+{:ok, "Clojure"}
+```
 
-Listing 2.37:  Matching only part of a pattern. (Interactive Elixir)
+清单 2.39：不成功的提取返回 `:error`（交互式Elixir）
 
-`iex> %{jose: most_awesome_language} = programmers`
-`%{joe: "Erlang", jose: "Elixir", matz: "Ruby", rich: "Clojure"}`
-`iex> most_awesome_language``"Elixir"`
-This will come in very handy when you are only interesting in extracting a few pieces of information. Here is another useful technique that is used very often in Elixir programs. Notice the return values of these two expressions:
+```elixir
+iex> Map.fetch(programmers, :rasmus)
+:error
+```
 
+注意，当找到键时返回一个包含原子 `:ok` 和值的元组，否则返回 `:error` 原子。这里你将看到元组和原子是如何有用的，以及我们如何利用模式匹配来利用这些返回值。通过利用快乐路径和异常路径的返回值，我们可以这样表达自己：
 
-Listing 2.38: A successful fetch returns
-`{:ok, value}`
-(Interactive Elixir)
+清单 2.40：处理快乐路径和错误路径（交互式Elixir）
 
-`iex> Map.fetch(programmers, :rich)`
-`{:ok, "Clojure"}`
-Listing 2.39: An unsuccessful fetch returns
-`:error`
-(Interactive Elixir)
+```elixir
+iex> case Map.fetch(programmers, :rich) do #1
+...>   {:ok, language} ->
+...>     IO.puts "#{language} is a legit language."
+...>   :error ->
+...>     IO.puts "No idea what language this is."
+...> end
+```
 
-`iex> Map.fetch(programmers, :rasmus)`
-`:error`
-Notice that a tuple with the atom
-`:ok`
-and the value is returned when a key is found, and an
-`:error`
-atom otherwise. Here you will see how tuples and atoms are useful, and how we can exploit this with pattern matching. By making use of the return values of both the happy and the exceptional path, we can express ourselves like so:
-
-
-Listing 2.40:   Handling both the happy path and error path (Interactive Elixir)
-
-`iex> case Map.fetch(programmers, :rich) do #1`
-`...>   {:ok, language} ->`
-`...>     IO.puts "#{language} is a legit language."`
-`...>   :error ->`
-`...>     IO.puts "No idea what language this is."``...> end`
-This returns:
+这将返回：
 
 `Clojure is a legit language.`
-Example: Reading a File
 
+示例：读取文件
 
-This technique is very useful for declaring preconditions in your program. What do I mean by that? Let’s take reading a file as an example. If most of your logic depends on the file being *readable*, then it makes sense to know as soon as possible if some error occurs with file reading. It would be helpful to know what kind of error occurred too. Here’s a snippet from the
-`File.read/1`
-documentation:
+这种技术非常适用于在程序中声明前提条件。我的意思是什么？以读取文件为例。如果你的大部分逻辑依赖于文件的*可读性*，那么知道文件读取出现错误的情况尽早出现是有意义的。知道发生了什么类型的错误也会有所帮助。以下是 `File.read/1` 文档的片段：
 
+![](../Images/2_6.png)
 
-![](../Images/2_6.png)  
+图 2.6：File.read/1 的文档
 
+你会如何编写文件读取部分？更重要的是，从上述文档中我们能学到什么？
 
+1. 对于成功的读取，`File.read/1` 返回一个 `{:ok, binary}` 元组。注意 `binary` 是读取文件的全部内容。
 
-Figure 2.6 Documentation for File.read/1
+2. 否则，将返回 `{:error, posix}` 元组。变量 `posix`
 
+ 包含错误原因，这是一个原子，如 `:enoent` 或 `:eaccess`。
 
-How would you write the file reading portion? More importantly, what can we learn from reading the above documentation?
+清单 2.41：读取文件
 
+```elixir
+case File.read("KISS - Beth.mp3") do
+    {:ok, binary} ->
+    IO.puts "KIϟϟ rocks!"
+    {:error, reason} ->
+    IO.puts "No Rock N Roll for anyone today because of #{reason}."
+end
+```
 
-1.  For a successful read,
-`File.read/1`
-returns a
-`{:ok, binary}`
-tuple. Note that
-`binary`
-is the entire contents of the read file.
+示例：井字棋盘
 
+以下是使用元组的井字棋应用程序的一个示例。在这个例子中，我们有一个 `check_board/1` 函数，它检查井字棋的棋盘配置。棋盘是使用元组表示的。注意我们如何使用元组“绘制”棋盘，以及代码是多么易于理解：
 
-2.  Otherwise, a
-`{:error, posix}`
-tuple will be returned. The variable
-`posix`
-contains the error reasons, which is an atom such as
-`:enoent`
-or
-`:eaccess`.
+```elixir
+def check_board(board) do
+    case board do
+        { :x, :x, :x,
+        _ , _ , _ ,
+        _ , _ , _ } -> :x_win
 
+        { _ , _ , _ ,
+        :x, :x, :x,
+        _ , _ , _ } -> :x_win
 
-Listing 2.41:  Reading a file
+        { _ , _ , _ ,
+        _ , _ , _ ,
+        :x, :x, :x} -> :x_win
 
-`case File.read("KISS - Beth.mp3") do`
-`{:ok, binary} ->`
-`IO.puts "KIϟϟ rocks!"`
-`{:error, reason} ->`
-`IO.puts "No Rock N Roll for anyone today because of #{reason}."``end`
-Example: Tic-Tac-Toe board
+        { :x, _ , _ ,
+        :x, _ , _ ,
+        :x, _ , _ } -> :x_win
 
+        { _ , :x, _ ,
+        _ , :x, _ ,
+        _ , :x, _ } -> :x_win
 
-Here's an illustrative example from the Tic-Tac-Toe application that uses tuples. In this example, we have a
-`check_board/1`
-function that checks against a tic-tac-toe’s board configuration. The board is expressed using tuples. Notice how we “draw” the board using tuples, and how easy to understand the code is:
+        { _ , _ , :x,
+        _ , _ , :x,
+        _ , _ , :x} -> :x_win
 
-`def check_board(board) do`
-`case board do`
-`{ :x, :x, :x,`
-`_ , _ , _ ,`
-`_ , _ , _ } -> :x_win`
+        { :x, _ , _ ,
+        _ , :x, _ ,
+        _ , _ , :x} -> :x_win
 
-`{ _ , _ , _ ,`
-`:x, :x, :x,`
-`_ , _ , _ } -> :x_win`
+        { _ , _ , :x,
+        _ , :x, _ ,
+        :x, _ , _ } -> :x_win
 
-`{ _ , _ , _ ,`
-`_ , _ , _ ,`
-`:x, :x, :x} -> :x_win`
+        # Player O board patterns omitted ...
 
-`{ :x, _ , _ ,`
-`:x, _ , _ ,`
-`:x, _ , _ } -> :x_win`
+        { a, b, c,
+        d, e, f,
+        g, h, i } when a and b and c and d and e and f and g and h and i -> :draw
 
-`{ _ , :x, _ ,`
-`_ , :x, _ ,`
-`_ , :x, _ } -> :x_win`
+        _ -> :in_progress
 
-`{ _ , _ , :x,`
-`_ , _ , :x,`
-`_ , _ , :x} -> :x_win`
+    end
+end
+```
 
-`{ :x, _ , _ ,`
-`_ , :x, _ ,`
-`_ , _ , :x} -> :x_win`
+'`_`' 是 "不关心" 或 "匹配一切" 运算符。在本书中你将看到很多这样的例子。在下一节中，我们将看到更多模式匹配的例子，其中我们将讨论*列表*。
 
-`{ _ , _ , :x,`
-`_ , :x, _ ,`
-`:x, _ , _ } -> :x_win`
+示例：解析MP3文件
 
-`# Player O board patterns omitted ...`
+Elixir 非常适合解析二进制数据。在这个例子中，我们将从MP3文件中提取元数据。这也是一个很好的练习，以加强你之前学到的一些概念。在解析任何二进制之前，你必须知道布局。我们感兴趣的信息，*ID3标签*，位于mp3二进制的*最后128字节*：
 
-`{ a, b, c,`
-`d, e, f,`
-`g, h, i } when a and b and c and d and e and f and g and h and i -> :draw`
+![](../Images/2_7.png)
 
-`_ -> :in_progress`
+图 2.7：ID3标签位于MP3二进制的最后128字节。
 
-`end``end`
-The '`_`' is the "don't care" or "match everything" operator. You will see quite a few examples in this book. You will see more pattern-matching in the next section, where we look at *lists*.
+这意味着我们必须以某种方式忽略音频数据部分，只关注ID3标签。下图显示了ID3标签的布局：
 
+![](../Images/2_8.png)
 
-Example: Parsing an MP3 file
+图 2.8：ID3标签的布局。
 
+ID3标签的前三个字节称为头部，包含三个字符：“T”，“A”和“G”。接下来的30个字节包含*标题（title）*。然后是30个字节的*艺术家（artist）*，接着是另外30个字节的*专辑（album）*。接下来的4个字节是*年份（year）*（例如：“2”，“0”，“1”，“4”）。试想你会如何在其他编程语言中实现这一点。这是Elixir版本的实现，请将此文件保存为`id3.ex`。
 
-Elixir is brilliant for parsing binary data. In this example, we are going to extract metadata from an MP3 file. It is also a good exercise to reinforce some of the concepts you have learnt earlier. Before you parse any binary, you must know the layout. The information that we are interested in, the *ID3 tag*, is located at the *last 128 bytes* of the mp3 binary:
-
-
-![](../Images/2_7.png)  
-
-
-
-Figure 2.7: The ID3 tag is located at the last 128 bytes of the MP3 binary.
-
-
-This means that we must somehow ignore the audio data portion, and concentrate only on the ID3 tag. The following diagram shows the layout of the ID3 tag:
-
-
-![](../Images/2_8.png)  
-
-
-
-Figure 2.8: The layout of the ID3 tag.
-
-
-The first 3 bytes of the ID3 tag is called the header, and contains 3 characters – “T”, “A”, and a “G”. The next 30 bytes contain the *title*. The next 30 bytes is the *artist*, followed by another 30 bytes containing the *album*. The next 4 bytes is the *year* (e.g.: “2”, “0”, “1”, “4”). Try to imagine how you might attempt this in some other programming language. Here is the Elixir version. Save this file as
-`id3.ex`.
-
-
-Listing 2.42:  The full ID3 parsing program. Save this file as
-`id3.ex`.
-
-`defmodule ID3Parser do`
-
-`def parse(file_name) do`
-`case File.read(file_name) do                                         #1`
-
-`{:ok, mp3} ->                                                      #2`
-`mp3_byte_size = byte_size(mp3) – 128                             #4`
-
-`<< _ :: binary-size(mp3_byte_size), id3_tag :: binary >> = mp3   #5`
-
-`<< "TAG", title   :: binary-size(30),`
-`artist  :: binary-size(30),`
-`album   :: binary-size(30),`
-`year    :: binary-size(4),`
-`_rest   :: binary >>       = id3_tag                   #6`
-
-`IO.puts "#{artist} - #{title} (#{album}, #{year})"`
-
-`_ ->                                                               #3`
-`IO.puts "Couldn't open #{file_name}"`
-`end`
-`end``end`
-#1 Read the MP3 binary.
-
-
-#2 A successful file read returns a tuple that matches this pattern
-
-
-#3 A failed file read is matched with anything else
-
-
-#4 Calculate the audio portion of the MP3 in bytes
-
-
-#5 Pattern matching the MP3 binary to capture the bytes of the ID3 tag
-
-
-#6 Pattern matching the ID3 tag to capture the various ID3 fields
-
-
-An example run of the program:
-
-`% iex id3.ex`
-`iex(1)> ID3Parser.parse "sample.mp3"`
-And an example result:
-
-`Lana Del Rey - Ultraviolence (Ultraviolence, 2014)`
-`:ok`
-Let’s walk through the program. First, the program reads the MP3 binary. A happy path will return a tuple that matches
-`{:ok, mp3}`, where
-`mp3`
-contains the binary contents of the file. Otherwise, the “catch-all” \_ operator will match a failed file read.
-
-
-Since we are interested only in the ID3 tag, we need to find a way to “skip ahead”. We first compute *size in bytes* of the *audio* portion of the binary. Now that we have this information, we can make use of the size of the audio portion to tell Elixir how to destructure the binary. We pattern match the MP3 binary by declaring a pattern on the left, and the mp3 variable on the right. Recall that variable assignments are on the left, and pattern matching is attempted otherwise.
-
+```elixir
+defmodule ID3Parser do
+  def parse(file_name) do
+    case File.read(file_name) do #1 读取MP3二进制数据。
+      {:ok, mp3} -> #2 成功读取文件返回一个匹配此模式的元组。
+        mp3_byte_size = byte_size(mp3) – 128 #4 计算MP3音频部分的字节大小。
+        << _ :: binary-size(mp3_byte_size), id3_tag :: binary >> = mp3 #5 使用模式匹配从MP3二进制数据中捕获ID3标签的字节。
+        << "TAG", title   :: binary-size(30),
+          artist  :: binary-size(30),
+          album   :: binary-size(30),
+          year    :: binary-size(4),
+          _rest   :: binary >>       = id3_tag #6 使用模式匹配从ID3标签中捕获各种ID3字段。
+        IO.puts "#{artist} - #{title} (#{album}, #{year})"
+      _ -> #3 文件读取失败则与其他任何内容匹配。
+        IO.puts "Couldn't open #{file_name}"
+    end
+  end
+end
+```
+
+程序运行示例：
+
+```elixir
+% iex id3.ex
+iex(1)> ID3Parser.parse "sample.mp3"
+```
+程序运行结果示例：
+
+```elixir
+Lana Del Rey - Ultraviolence (Ultraviolence, 2014)
+:ok
+```
+
+让我们来回顾一下程序的运行过程。首先，程序读取MP3的二进制数据。正常情况下会返回一个匹配`{:ok, mp3}`的元组，其中`mp3`包含文件的二进制内容。否则，通用的`_`操作符将匹配文件读取失败的情况。
+
+由于我们只关注ID3标签，因此需要找到一种方法来“跳过”前面的部分。我们首先计算二进制音频部分的*字节大小*。现在我们有了这个信息，就可以告诉Elixir如何解构二进制数据。我们通过在左边声明一个模式，并在右边使用mp3变量来进行模式匹配。请记住，变量赋值在左边，否则尝试进行模式匹配。
 
 ![](../Images/2_9.png)  
 
+图 2.9: 二进制数据的解构方式。
 
+你可能认出了`<< >>`。它用于表示一个二进制数据。然后我们声明我们对音频部分不感兴趣。我们如何做到这一点呢？我们通过指定之前计算出的二进制大小来实现。剩下的就是ID3标签，被捕获到`id3_tag`变量中。现在我们可以自由地从ID3标签中提取信息了！
 
-Figure 2.9: How the binary gets destructured.
-
-
-You might recognize the
-`<< >>.`
-It is used to represent a binary. We then declare that we are not interested in the audio part. How? We do that by specify the binary size that we have computed previously. What *remains*, is the ID3 tag. That is captured in the
-`id3_tag`
-variable. Now we are free to extract the information from the ID3 tag!
-
-
-In order to do that, we perform another pattern match with the declared pattern on the left and
-`id3_tag`
-on the right. By declaring the appropriate number of bytes, the title, artist and other information is captured in the respective variables.
-
+为了做到这一点，我们进行了另一个模式匹配，左边声明了模式，右边是`id3_tag`。通过声明适当数量的字节，标题、艺术家和其他信息被捕获到相应的变量中。
 
 ![](../Images/2_10.png)  
 
+图 2.10: 解构ID3二进制数据。
 
+## 2.6 列表
 
-Figure 2.10: Destructuring the ID3 binary.
+列表是 Elixir 中的另一种数据类型。列表有许多有趣的用途，因此值得单独讨论。列表在某种程度上类似于*链表*[[3]](#uVViRxNwYGTYar6izeVraFD)，因为随机访问基本上是一个 O(n) （线性）操作。下面是列表的定义：
 
+一个非空列表由头部和尾部组成。尾部也是一个列表。
 
-## 2.6           Lists
-
-
-Lists are another data type in Elixir. There are quite a few interesting things you can do with lists, and therefore deserves its own section. Lists are somewhat similar to *linked-lists*[[3]](#uVViRxNwYGTYar6izeVraFD) in that random access is essentially a O(n) (linear) operation. Here is the definition of a list:
-
-
-A non-empty list consists of a head and a tail. The tail is also a list.
-
-
-Notice the recursive nature of the above definition. Translated to code:
+请注意上述定义的递归性质。转换成代码就是：
 
 `iex> [1, 2, 3] == [1 | [2 | [3 | []]]]`
 `true`
-A diagram might illustrate this better:    
-
+一个图示可能更能说明这一点：
 
 ![](../Images/2_11.png)  
 
+图 2.11：[1,2,3] 的图示表示
 
+让我们从最外层的盒子开始理解这幅图。这表明列表的头部是 1，随后是列表的尾部。这个尾部，又是另一个列表。这次，这个列表的头部是 2，随后是尾部，这个尾部（再次）是另一个列表。
 
-Figure 2.11: [1,2,3] represented as a picture
+最终，这个列表（从第三个封闭盒子）由一个头部 3 和一个尾部组成。这个尾部是一个空列表。实际上，*任何列表的最后一个元素的尾部总是一个空列表*。递归函数利用这一事实来确定列表何时结束。
 
+您还可以使用模式匹配运算符来证明两边确实是同一回事：
 
-Let’s try to understand this picture by starting at the outermost box. This says that the head of the list is 1, followed by the tail of the list. This tail, in turn, is yet another list. This time, the head of this list is 2, followed by the tail, which (again) is another list.
-
-
-Finally, this list (from the third enclosing box) consists of a head of 3, and a tail. This tail is an empty list. In fact, the *tail of the final element of any list is always an empty list*. Recursive functions make use of this fact to determine when the end of the list is reached.
-
-
-You can also use the pattern-matching operator to prove that both sides are in fact the same thing :
-
-
-Listing 2.43: The left hand side and right hand side is equivalent. (Interactive Elixir)
+列表 2.43：左侧和右侧是等价的。（交互式 Elixir）
 
 `iex> [1, 2, 3] = [1 | [2 | [3 | []]]]`
 `[1, 2, 3]`
-Since no
+由于没有
 `MatchError`
-occurred, we can be certain that both representations of the list are equivalent. Of course, you wouldn’t be typing
-`[1|[2|[3|[]]]]`
-in your day-to-day code. This is just to emphasize that a list is a recursive data structure.
+发生，我们可以确定这两种表示列表的方法是等价的。当然，您不会在日常代码中输入
+`[1|[2|[3|[]]]]`。
+这只是为了强调列表是一种递归数据结构。
 
+我还没有解释‘`|`’是什么。‘`|`’运算符通常被称为*cons* [[4]](#uFTSC7YFSH3DxvWmebI7ae2)运算符。应用于列表时，它用于分隔头部和尾部。也就是说，列表被*解构*了。这是模式匹配的又一个实例。
 
-I have not explained what ‘`|`’ is. The ‘`|`’ operator is commonly called the *cons* [[4]](#uFTSC7YFSH3DxvWmebI7ae2)operator. When applied to lists, it separates the head and tail. That is, the list is *destructured*. This is yet another instance of pattern matching in action.
-
-
-Listing 2.44: Destructuring a list using the cons operator. (Interactive Elixir)
+列表 2.44：使用 cons 运算符解构列表。（交互式 Elixir）
 
 `iex> [head | tail] = [1, 2, 3]`
 `[1, 2, 3]`
-Let’s check the contents of head and tail:
+让我们检查 head 和 tail 的内容：
 
 `iex> head`
 `1`
 `iex> tail #A``[2, 3]`
-#A This is also a list
+#A 这也是一个列表
 
-
-Notice that
+注意
 `tail`
-is also a list, which is in line with the definition. You can also use the cons operator to *add* (or append) to the beginning of a list:
+也是一个列表，这符合定义。您还可以使用 cons 运算符向列表的开头*添加*（或追加）：
 
-
-Listing 2.45: Using the cons operator to append to a list. (Interactive Elixir)
+列表 2.45：使用 cons 运算符向列表中追加。（交互式 Elixir）
 
 `iex(1)> list = [1, 2, 3]`
 `[1, 2, 3]`
 `iex(2)> [0 | list ]``[0, 1, 2, 3]`
-Listing 2.46: Using the ++ operator to concatenate lists (Interactive Elixir)
+列表 2.46：使用 ++ 运算符连接列表（交互式 Elixir）
 
-
-We can also use the
+我们还可以使用
 `++`
-operator to concatenate lists:
+运算符来连接列表：
 
 `iex(3)> [0] ++ [1, 2, 3]`
 `[0, 1, 2, 3]`
-What about a single element list? If you understood the diagram of the list previously, then this would be a piece of cake.
+那么单个元素的列表呢？如果您理解了之前的列表图示，那么这将是小菜一碟。
 
+列表 2.47：单元素列表的尾部匹配为空列表。（交互式 Elixir）
 
-Listing 2.47: The tail of a single element list matches to an empty list. (Interactive Elixir)
+`
 
-`iex(1)> [ head | tail ] = [:lonely]`
+iex(1)> [ head | tail ] = [:lonely]`
 `[:lonely]`
 `iex(2)> head`
 `:lonely`
 `iex(3)> tail``[]`
-The list we have here contains a single atom. Now notice our
+这里我们有一个包含单个原子的列表。现在注意我们的
 `tail`
-is an empty list. This might seem strange at first, but if you think about it, it fits the definition. It is precisely this definition that allows us to do interesting things with lists and recursion, which we examine next.
+是一个空列表。起初这可能看起来有些奇怪，但如果您仔细思考，它符合定义。正是这种定义使我们能够用列表和递归做一些有趣的事情，我们接下来会进行探索。
 
+示例：展平列表
 
-Example: Flattening a List
-
-
-Now that you know how lists work, let's build our very own
-`flatten/1`.
+现在您了解了列表的工作原理，让我们来构建我们自己的
+`flatten/1`。
 `flatten/1`
-takes in a possibly nested list and returns a flattened version. Flattening lists can be useful especially if the list is used to represent a Tree [[5]](#u2to24Ap2mk93kr7NvjAZIG)data structure. Flattening the tree therefore returns all the elements contained in the tree. Let’s see an example:
+接受一个可能嵌套的列表，并返回一个展平的版本。展平列表特别有用，尤其是当列表用于表示树 [[5]](#u2to24Ap2mk93kr7NvjAZIG) 数据结构时。因此，展平树会返回树中包含的所有元素。让我们看一个例子：
 
 `List.flatten [1, [:two], ["three", []]]`
-will return
+将返回
 
 `[1, :two, "three"]`
-Here is one possible implementation of
-`flatten/1`:
+这是
+`flatten/1` 的一种可能实现：
 
 `defmodule MyList do`
 `def flatten([]), do: [] #1`
@@ -1098,341 +858,275 @@ Here is one possible implementation of
 `end`
 
 `def flatten(head), do: [ head ] #3``end`
-#1 Base case, an empty list
+#1 基本情况，一个空列表
 
+#2 非空列表，有多于 1 个元素
 
-#2 Non-empty list, with more than 1 element
+#3 单元素列表
 
+花点时间消化这段代码，因为它不仅仅是表面看起来那样。需要考虑 3 种情况：
 
-#3 Single element list
+我们从基本情况（或者如果您上过一些计算机科学课程的话，退化情况）开始 —— 空列表。如果我们得到一个空列表，我们只需返回一个空列表。
 
-
-Take a moment to digest the code, because there's more than meets the eye. There are 3 cases to consider:
-
-
-We begin with the base case (or degenerate case if you've done some CS course) – the empty list. If we get the empty list, we simply return an empty list.
-
-
-For a non-empty list #2, we use the cons operator to split into the
+对于非空列表 #2，我们使用 cons 运算符将其分解为
 `head`
-and
-`tail`. We then recursively call
+和
+`tail`。然后我们递归地调用
 `flatten/1`
-on both the
+处理
 `head`
-and
-`tail.`
-Next, the result is concatenated using the
+和
+`tail`。
+接下来，使用
 `++`
-operator. Note that
+运算符将结果连接起来。注意
 `head`
-can also be a nested list. For example,
+也可能是一个嵌套列表。例如，
 `[[1], 2]`
-would mean that
+意味着
 `head`
-is
-`[1]`.
+是
+`[1]`。
 
+如果我们得到一个非列表参数，我们将其转换成一个列表。现在，考虑（最好在纸上跟踪）对像
+`[[1], 2]` 这样的列表的处理。让我们跟踪执行过程：
 
-If we get a non-list argument, we turn it into a list. Now, consider (it helps to trace this on paper) what happens to a list such as
-`[[1], 2]`. Let's trace the execution:
+1.   第一个函数子句 #1 不匹配。
 
-
-1.   The first function clause #1 does not match.
-
-
-2.  The second function clause #2 matches though. In this case, we pattern match the list, and
+2.  第二个函数子句 #2 匹配。在这种情况下，我们对列表进行模式匹配，
 `head`
-is
-`[1]`, and
+是
+`[1]`，而
 `tail`
-is
-`2`. Now,
+是
+`2`。现在，
 `flatten([1])`
-and
+和
 `flatten(2)`
-are called recursively.
+被递归调用。
 
-
-3.  Let's handle
-`flatten([1])`. Again it does not match the first clause #1. The second one #2 matches.  `head`
- is
-`1`, and
+3.  处理
+`flatten([1])`。它同样不匹配第一个子句 #1。第二个子句 #2 匹配。
+ `head`
+ 是
+`1`，而
 `tail`
-is
-`[]`.
+是
+`[]`。
 
-
-4.  Now,
+4.  现在调用
 `flatten(1)`
-is called, and now, the third function clause #3 matches, and returns
-`[1]`.
+，第三个函数子句 #3 匹配，返回
+`[1]`。
 `flatten([])`
-matches the first clause and returns
-`[]`. A previous call to
+匹配第一个子句，返回
+`[]`。之前对
 `flatten(2)`
-(see step 2) returns
-`[2]`.
+的调用（见第 2 步）返回
+`[2]`。
 `[1] ++ [] ++ [2]`
-yields our flattened list.
+生成了我们的展平列表。
 
+不要灰心，如果你第一次没有完全理解。就像大多数事情一样，多一些练习会有很大的帮助。此外，在接下来的章节中，你将看到许多例子。
 
-Don't despair if you did not get that the first time round. As with most things, some practice will go a long way. Also, you will see numerous examples in the upcoming chapters.
+## 函数子句（Function Clauses）的排序
 
+我之前提到过，函数子句（Function Clauses）的*顺序*很重要。这是一个完美的例子来解释为什么：
 
-Ordering of Function Clauses
+清单 2.11: 函数子句（Function Clauses）的顺序很重要！
 
+```elixir
+defmodule MyList do
 
-I previously mentioned that the *order* of function clauses matter. This is a perfect place to explain why:
+def flatten([ head | tail ]) do
+    flatten(head) ++ flatten(tail)
+end
 
+def flatten(head), do: [ head ]
 
-Listing 2.11:  The order of function clauses matter!
+def flatten([]), do: [] #1 这行永远不会运行！
+end
 
-`defmodule MyList do`
+```
 
-`def flatten([ head | tail ]) do`
-`flatten(head) ++ flatten(tail)`
-`end`
+我们将基本情况设为了最后一个子句。想一想，当我们尝试`MyList.flatten([])`时会发生什么？我们期望得到`[]`，但实际上我们得到了`[[]]`。如果你仔细思考一下，你会意识到#1从未被执行。原因是第二个函数子句会匹配`[]`，因此第三个函数子句将被忽略。
 
-`def flatten(head), do: [ head ]`
+让我们真正运行一下这个程序：
 
-`def flatten([]), do: [] #1`
-`end`
-#1 This line never runs!
+清单 2.12: Elixir 会有帮助地警告未匹配的子句。 (交互式 Elixir)
 
+```elixir
+% iex length_converter.ex
+warning: this clause cannot match because a previous clause at line 7 always matches
+```
+Elixir 在我们背后支持！像这样的警告值得注意，因为它们可以节省你数小时的调试头痛。而未匹配的条款可能意味着无效代码，或者在更糟糕的情况下，是一个无限循环。
 
-We have made the base case the last clause. Think about what happens when we try
-`MyList.flatten([])`? We expect to get
-`[]`, but in fact we get back
-`[[]]`. If you give it a little thought, you will realize that #1 never runs. The reason is that the second function clause will match
-`[]`, and therefore the third function clause will be ignored.
+## 2.7  管道运算符 `|>`
 
+现在，我想介绍编程语言史上™最有用的运算符之一 - `|>`。这个运算符将左边表达式的结果作为右边函数调用的第一个参数。这是我最近写的一个Elixir程序中的代码片段。如果没有管道运算符，我会这样写它：
 
-Let's try running this for real:
+代码清单 2.48：没有 `|>` 运算符（或者，大多数语言的做法）
 
+```elixir
+defmodule URLWorker do
+  def start(url) do
+    do_request(HTTPoison.get(url))
+  end
+  # ...
+end
+```
 
-Listing 2.12: Elixir helpfully warns about unmatched clauses. (Interactive Elixir)
+`HTTPoison` 是一个 HTTP 客户端。它接收一个 `url` 并返回 HTML 页面。然后将页面传递给 `do_request` 函数进行一些解析。注意，在这个版本中，你必须寻找最内层的括号来定位 `url`，然后在你心理上追踪连续的函数调用向外移动。
 
-`% iex length_converter.ex`
-`warning: this clause cannot match because a previous clause at``line 7 always matches`
-Elixir has got our back! Take heed of warnings like this, because they can save you hours of debugging headaches. And unmatched clauses could either mean dead code, or in the worse case, an infinite loop.
+我向你展示带有管道运算符的版本：
 
+代码清单 2.49：使用 `|>` 运算符
 
-2.7           Meet |>, the Pipe operator
+```elixir
+defmodule URLWorker do
+  def start(url) do
+    result = url |> HTTPoison.get |> do_request
+  end
+  # ...
+end
+```
 
+毫无疑问吧？许多例子将广泛使用 `|>`。你越多使用 `|>`，就越会开始看到 *数据正在* *从一种形式转换* 到另一种，就像装配线一样。事实上，一旦你经常使用它，当你在其他语言中编程时，你会开始想念它。
 
-Now, I would like introduce one of the most useful operators ever invented in Programming Language History™ –
-`|>`[[6]](#uK9hrHa3kQCIGQ7flXO8FoF). The
-`|>`
-takes the result of the expression on the left and inserts it as the first parameter of the function call on the right. Here is a code snippet from an Elixir program I have written recently. Without the pipe operator, this is how I would have written it:
+示例：按文件名过滤目录中的文件
 
+假设我有一个装满电子书的目录，这个目录可能嵌套有文件夹。我想只获取 EPUB 的文件名。也就是说，我只想要文件名以 `*.epub` 结尾且包含 “Java” 的书籍。这是我的做法：
 
-Listing 2.48: Without the |> operator (or, how most languages would do it)
+代码清单 2.50：过滤包含 “Java” 的 epub。
 
-`defmodule URLWorker do`
-`def start(url) do`
-`do_request(HTTPoison.get(url))`
-`end`
-`# ...``end`
-`HTTPoison`
-is a HTTP client. It takes in a
-`url`
-and returns the HTML page. The page is then passed to the
-`do_request`
-function to perform some parsing. Notice that in this version, you have to look for the innermost brackets to locate
-`url`, then move outwards as you mentally trace the successive function calls.
+```elixir
+"/Users/Ben/Books"                                  #1
+|> Path.join("**/*.epub")                           #2
+|> Path.wildcard                                    #3
+|> Enum.filter(fn fname ->                          #4
+  String.contains?(Path.basename(fname), "Java") end)
+```
 
+一个示例输出看起来像：
 
-I present you the version with pipe operators:
+代码清单 2.51：上述表达式的一个示例输出
 
+```bash
+["/Users/Ben/Books/Java/Java_Concurrency_In_Practice.epub",
+ "/Users/Ben/Books/Javascript/JavaScript Patterns.epub",
+ "/Users/Ben/Books/Javascript/Functional_JavaScript.epub",
+ "/Users/Ben/Books/Ruby/Using_JRuby_Bringing_Ruby_to_Java.epub"]
+```
 
-Listing 2.49: With the |> operator
+#1 是目录的字符串表示。在 #2 中，我们构造了一个带通配符的路径。此外，我们指定我们只对 EPUB 感兴趣。这个结果传递给 #3。通配符函数读取路径，并返回匹配的文件名列表。这反过来又传递到 #4 中的过滤函数，只选择包含 “Java” 的文件名。阅读如此明确和显而易见地描述其步骤的代码是非常好的。
 
-`defmodule URLWorker do`
-`def start(url) do`
-`result = url |> HTTPoison.get |> do_request`
-`end`
-`# ...``end`
-No contest right? Many of the examples will make extensive use of
-`|>`. The more you use
-`|>`, the more you will start to see *data as being* *transformed* from one form to another, something like an assembly line. In fact, once you use it often enough, you will start miss it when you program in other languages.
+## 2.8 Erlang与Elixir互操作性
 
+由于Elixir和Erlang共享相同的字节码，因此在性能方面调用Erlang代码不会有任何影响。更重要的是，这意味着您可以自由地使用任何Erlang库与您的Elixir代码一起使用。
 
-Example: Filtering files by filename in a directory
+### 从Elixir调用Erlang函数
 
+唯一的注意点是*如何*调用代码。例如，您可以像这样在Erlang中生成一个随机数：
 
-Let’s say I have a directory filled with e-books, where this directory could be nested with folders. I want to get the file names of only the EPUBs. That is, I only want books that have filenames that end with
-`*.epub`, with “Java” in it. Here’s how I would do it:
+#### 清单 2.52：在Erlang中生成随机数（交互式Erlang）
 
+```erlang
+1> random:uniform(123)
+55
+```
 
-Listing 2.50: Filtering epubs that have “Java” in them.
+这个函数是Erlang标准发行版的一部分。我可以在Elixir中用一些语法调整调用相同的Erlang函数：
 
-`"/Users/Ben/Books"                                    #1`
-`|> Path.join("**/*.epub")                           #2`
-`|> Path.wildcard                                    #3`
-`|> Enum.filter(fn fname ->                          #4`
-`String.contains?(Path.basename(fname), "Java")``end)`
-An example output looks like:
+#### 清单 2.53：将 `random:uniform().` 翻译为Elixir（交互式Elixir）
 
+```elixir
+iex> :random.uniform(123)
+55
+```
 
-Listing 2.51: An example output of the above expression
+注意两个清单中冒号和点的位置。这就是全部！在Elixir中使用原生Erlang函数时有一个小注意点。您无法从`iex`访问Erlang函数的文档：
 
-`["/Users/Ben/Books/Java/Java_Concurrency_In_Practice.epub",`
-`"/Users/Ben/Books/Javascript/JavaScript Patterns.epub",`
-`"/Users/Ben/Books/Javascript/Functional_JavaScript.epub",``"/Users/Ben/Books/Ruby/Using_JRuby_Bringing_Ruby_to_Java.epub"]`
-#1 is the string representation of the directory. In #2, we construct a path with wildcards. Additionally, we specify that we are only interested in EPUBs. The result of this is passed into #3. The wildcard function reads the path, and returns a list of matched file names. This in turn is passed into the filter function in #4, where only file names containing “Java” is selected. It is very nice to read code that describes its steps so explicitly and obvious.
+#### 清单 2.54：在iex中无法获得Erlang文档（交互式Elixir）
 
+```elixir
+iex(3)> h :random
+:random 是一个Erlang模块，因此它没有Elixir风格的文档
+```
 
-## 2.8           Erlang Interoperability
+调用Erlang函数在Elixir中没有相应实现的标准库时非常有用。如果您比较Erlang和Elixir的标准库，可能会得出Erlang的库功能更加丰富的结论。但如果您仔细想想，Elixir实际上免费获得了一切！
 
+### 在Elixir中调用Erlang的HTTP客户端
 
-Because both Elixir and Erlang share the same byte code, calling Erlang code does not affect performance in any way. More importantly, this means that you are free to use *any* Erlang library out there with your Elixir code.
+通常，如果我发现Elixir缺少我想要的某个功能，我会首先检查是否有Erlang标准库函数可以使用，然后才搜索第三方库。例如，我曾想在Elixir中构建一个网络爬虫。构建网络爬虫的第一步之一就是能够下载网页。这需要一个HTTP客户端。Elixir没有内置的HTTP客户端——它不需要，因为Erlang有一个，恰当地命名为`httpc`[[7]]。
 
+假设我想下载某个编程语言的网页。我查阅了Erlang文档[[8]]，找到了我需要的内容：
 
-Calling Erlang functions from Elixir
+![](../Images/2_6a.png)
 
+#### 图 2.6 Erlang文档中的httpc:request/1
 
-The only caveat is *how* the code is called. For example, you could generate a random number in Erlang like so:
+首先，我需要启动`inets`应用程序（文档中有说明），然后进行实际的请求：
 
+#### 清单 2.55：使用Erlang的httpc库下载网页（交互式Elixir）
 
-Listing 2.52: Generating a random number in Erlang (Interactive Erlang)
+```elixir
+iex(1)> :inets.start
+:ok
+iex(2)> {:ok, {status, headers, body}} = :httpc.request 'http://www.elixir-lang.org'
+{:ok,
+ {{'HTTP/1.1', 200, 'OK'},
+  [{'cache-control', 'max-age=600'}, {'date', 'Tue, 28 Oct 2014 16:17:24 GMT'},
+   {'accept-ranges', 'bytes'}, {'server', 'GitHub.com'},
+   {'vary', 'Accept-Encoding'}, {'content-length', '17251'},
+   {'content-type', 'text/html; charset=utf-8'},
+   {'expires', 'Tue, 28 Oct 2014 16:27:24 GMT'},
+   {'last-modified', 'Tue, 21 Oct 2014 23:38:22 GMT'}],
+  [60, 33, 68, 79, 67, 84, 89, 80, 69, 32, 104, 116, 109, 108, 62, 10, 60, 104,
+   116, 109
 
-`1> random:uniform(123)`
-`55`
-This function comes as part of the standard Erlang distribution. I could invoke the same Erlang function in Elixir, with some syntactical tweaks:
+, 108, 32, 120, 109, 108, 110, 115, 61, 34, 104, 116, 116, 112, 58, 47, 47, 119, 119, 119, 46, 119, 51, 46, 111, 114, 103, 47, 49, 57, 57, ...]}}
+```
 
+#### 还有一件事……
 
-Listing 2.53:  Translating 
-`random:uniform().`to Elixir (Interactive Elixir) 
+Erlang还有一个非常整洁的GUI前端，名为*Observer*，让您能够检查Erlang虚拟机等内容。调用它很简单：
 
-`iex> :random.uniform(123)`
-`55`
-Notice the positions of the colon and dot between the two listings. That’s really all to it! There is a minor caveat in Elixir when working with native Erlang functions. You cannot access documentation for Erlang functions from
-`iex`:
+#### 清单 2.56：调用Observer，一个内置的Erlang工具（交互式Elixir）
 
+```elixir
+iex(1)> :observer.start
+```
 
-Listing 2.54:  Erlang documentation is not available in iex (Interactive Elixir)
+由于您当前没有运行任何计算密集型进程，因此现在不会看到太多动作。但这里有一些截图，供您预览：
 
-`iex(3)> h :random`
-`:random is an Erlang module and, as such, it does not have Elixir-style docs`
-Calling Erlang functions can be very useful when Elixir doesn’t have an implementation available in the standard library. If you compare the Erlang standard library and the Elixir one, you might draw the conclusion that Erlang’s library is much more feature packed. But if you think about it, Elixir gets everything for free!
+![](../Images/2_7a.png)
 
+#### 图 2.7 Observer的截图
 
-Calling the Erlang HTTP client in Elixir
+Observer在查看VM承受的负载、监督树的布局（您将在后面的章节学习到这一点）以及查看Erlang提供的内置数据库中存储的数据方面非常有用。
 
+## 2.9 练习
 
-Usually if I find that Elixir is missing a certain feature I want, I will usually check if there’s an Erlang standard library function that I can use first, before searching for third party libraries. For example, I once wanted to build a web crawler in Elixir. One of the very first steps to building a web crawler is to be able to download a web page. This requires a HTTP client. Elixir doesn’t come with a built-in HTTP client – it doesn’t need to, because Erlang comes with one, aptly named
-`httpc`[[7]](#ugLW5GzsQcZ8zXABeWVTc2H). 
+这是一个相当长的章节。现在是时候确保你理解了章节中的所有内容。
 
+1. 实现 `sum/1` 函数。这个函数应该接收一个数字列表，并返回该列表的总和。
+2. 探索 `Enum` 模块。
+3. 将 `[1,[[2],3]]` 转换为 `[9, 4, 1]`，分别使用和不使用管道操作符。
+4. 将 Erlang 中的 `crypto:md5("Tales from the Crypt").` 翻译为 Elixir。
+5. 探索官方的 Elixir "入门指南"[[9]](#uzWboseQ5tC5ZfAHC6pfKpA)。
+6. 看看一个 IPV4 数据包。尝试编写一个解析器。
 
-Let’s say I want to download the web page of a certain programming language. I go to the Erlang documentation[[8]](#u2nrvV8vG6J5gy7FjyByQX2), and I manage to find exactly what I need:
+## 2.10 总结
 
+这结束了我们的快速旅程。如果你坚持到了这里，请给自己一个赞。如果你还没有理解所有内容，不用担心。许多概念会在途中变得清晰，一旦你看到它们的应用，许多编程结构会变得显而易见。作为一个快速回顾，这里是我们刚刚学到的内容：
 
-![](../Images/2_6a.png)  
+- Elixir 的基本数据类型。
+- 保护（Guards），以及它们如何与函数子句很好地协作。
+- 模式匹配，以及它如何导致非常声明式的代码。我们还看了一些模式匹配的实际例子。
+- 列表，另一个基本的数据结构。我们还看到了列表在 Elixir 中如何内部表示，以及这如何促进递归。
+- Elixir 和 Erlang 如何良好地协同工作。
 
-
-
-Figure 2.6  The httpc:request/1 Erlang documentation
-
-
-First, I need to start the
-`inets`
-application (it is stated in the documentation), followed by the actual request:
-
-
-Listing 2.55: Downloading a web page, using Erlang’s httpc library (Interactive Elixir)
-
-`iex(1)> :inets.start`
-`:ok`
-`iex(2)> {:ok, {status, headers, body}} = :httpc.request 'http://www.elixir-lang.org'`
-`{:ok,`
-`{{'HTTP/1.1', 200, 'OK'},`
-`[{'cache-control', 'max-age=600'}, {'date', 'Tue, 28 Oct 2014 16:17:24 GMT'},`
-`{'accept-ranges', 'bytes'}, {'server', 'GitHub.com'},`
-`{'vary', 'Accept-Encoding'}, {'content-length', '17251'},`
-`{'content-type', 'text/html; charset=utf-8'},`
-`{'expires', 'Tue, 28 Oct 2014 16:27:24 GMT'},`
-`{'last-modified', 'Tue, 21 Oct 2014 23:38:22 GMT'}],`
-`[60, 33, 68, 79, 67, 84, 89, 80, 69, 32, 104, 116, 109, 108, 62, 10, 60, 104,`
-`116, 109, 108, 32, 120, 109, 108, 110, 115, 61, 34, 104, 116, 116, 112, 58,``47, 47, 119, 119, 119, 46, 119, 51, 46, 111, 114, 103, 47, 49, 57, 57, ...]}}`
-And one more thing …
-
-
-Erlang has also a very neat GUI frontend called *Observer* that let’s you inspect the Erlang virtual machine, among other things. Invoking it is simple:
-
-
-Listing 2.56:  Invoking Observer, a built-in Erlang tool (Interactive Elixir)
-
-`iex(1)> :observer.start`
-Since you are not running any computationally intensive processes, you won’t be seeing much action for now. But here’s a few screenshots to whet your appetite:
-
-
-![](../Images/2_7a.png)  
-
-
-
-Figure 2.7 Screenshots from Observer
-
-
-Observer is very useful when it comes to seeing how much load the VM is taking, the layout of your supervision trees (you will learn about that in the later chapters), and also looking at the data stored in the built-in database(s) that Erlang provides.
-
-
-## 2.9           Exercises
-
-
-This was a pretty long chapter. Now it’s time to make sure you understood everything in the chapter.
-
-
-1.   Implement
-`sum/1`. This function should take in a list of numbers, and return the sum of the list.
-
-
-2.  Explore the
-`Enum`
-module.
-
-
-3.  Transform
-`[1,[[2],3]]`
-to
-`[9, 4, 1]`
-with and without the pipe operator.
-
-
-4.  Translate
-`crypto:md5("Tales from the Crypt").`
-from Erlang to Elixir.
-
-
-5.  Explore the official Elixir "Getting Started" guide[[9]](#uzWboseQ5tC5ZfAHC6pfKpA).
-
-
-6.  Take a look at an IPV4 packet. Try writing a parser for that.
-
-
-## 2.10       Summary
-
-
-This concludes our whirlwind tour. If you have made it this far, give yourself a pat on the shoulder. Do not worry if you have not understood everything. Many of the concepts will make sense along the way, and many of the programming constructs will be obvious once you see its applications. As a quick recap, here is what we just learnt about:
-
-
-·      Elixir’s fundamental data types.
-
-
-·      Guards, and how they work nicely together with function clauses.
-
-
-·      Pattern matching, and how it leads to very declarative code. We’ve also looked at a few real-world examples of pattern matching.
-
-
-·      Lists, another fundamental data structure. We’ve also seen how lists are represented internally in Elixir, and how that facilitates recursion.
-
-
-·      How Elixir and Erlang plays nicely with each other.
-
-
-In the next chapter, we learn the fundamental unit of concurrency in Elixir – the process. This is one of the features that make Elixir vastly different from “traditional” programming languages.
-
+在下一章中，我们将学习 Elixir 中并发的基本单位——进程。这是 Elixir 与“传统”编程语言截然不同的特性之一。
 
 
 
@@ -1440,11 +1134,11 @@ In the next chapter, we learn the fundamental unit of concurrency in Elixir – 
 [****[1]****](#uGqF9oefXSN254ifO9nOI74) https://github.com/tonini/alchemist.el
 [****[2]****](#uoUcCmRNSIi5gGo5YytDiK9) http://www.cs.cmu.edu/Groups/AI/html/cltl/clm/node252.html
 [****[3]****](#usLiHAmBCCcYO4nRXGgIKQB) http://en.wikipedia.org/wiki/Linked\_list
-[****[4]****](#uF8QOmDRZNNvpCpSmjAEfs5) This is short for construct. See <http://en.wikipedia.org/wiki/Cons> for more information.
+[****[4]****](#uF8QOmDRZNNvpCpSmjAEfs5) `construct`的缩写. 参考 <http://en.wikipedia.org/wiki/Cons>获得更多信息.
 [****[5]****](#uD2AVQHJ9OMdJBNJCWxC9tB) http://en.wikipedia.org/wiki/Tree\_%28data\_structure%29#Representations
-[****[6]****](#udkkAPdyHmLgLsDveAOujJ9) Little trivia – The |> operator is inspired from F#.
+[****[6]****](#udkkAPdyHmLgLsDveAOujJ9) `|>` 操作符收到了F#的启发.
 [****[7]****](#uJJ86MqDQDsHISshMOe2s83) http://erlang.org/doc/man/httpc.html#request-1
-[****[8]****](#uDMzs6Wh684M5CCzxbJmcyE) Who am I kidding? In reality, I’ll probably land on Stack Overflow first.
+[****[8]****](#uDMzs6Wh684M5CCzxbJmcyE)骗你的，在现实中我可能会首先访问StackOverflow。
 [****[9]****](#uYiNVPWCvsaM73aAlVYO2y7) http://elixir-lang.org/getting\_started/1.html
 
 
