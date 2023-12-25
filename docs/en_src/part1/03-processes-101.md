@@ -58,7 +58,7 @@ Here is one way to think about actors. Actors are just like people. We communica
 Conceptually, our application is pretty simple. The first version accepts a single argument containing a location, and it reports the temperature in Celsius. That involves making a HTTP request to an external weather service, and parsing the JSON response to extract the temperature.
 
 
-![](../../images/3_1.png)  
+![](../images//3_1.png)  
 
 
 
@@ -200,7 +200,7 @@ How did I know that I should include
 `:httpoison`’s case, the README clearly states:
 
 
-![](../../images/3_2.png)  
+![](../images//3_2.png)  
 
 
 
@@ -265,7 +265,7 @@ Before we get into the implementation for the worker, we need to obtain an API k
 to create an account. Once done, you will see that your API key has been created for you:
 
 
-![](../../images/3_3.png)  
+![](../images//3_3.png)  
 
 
 
@@ -583,7 +583,7 @@ This results in:
 The problem with this approach is that it is *wasteful*. As the size of the list grows, so will the time needed to wait for all the responses to complete. The only time the next request will be processed is when the one before it has completed. We can do better.
 
 
-![](../../images/3_2a.png)  
+![](../images//3_2a.png)  
 
 
 
@@ -751,7 +751,7 @@ Now, let's flush the messages:
 Awesome! We finally got back our result. Notice that the result are *not* in any order. That's because which response that completed first could send the reply back to the sender as soon as it was done. If you run the iteration again, you would most probably get the results in a different order.
 
 
-![](../../images/3_4.png)  
+![](../images//3_4.png)  
 
 
 
@@ -920,7 +920,7 @@ When the coordinator receives a message that fits the
 pattern, it first adds the result into the current list of results.
 
 
-![](../../images/3_5.png)  
+![](../images//3_5.png)  
 
 
 
@@ -933,7 +933,7 @@ Next, we check if the coordinator has received the correct number of results exp
 remains unchanged.
 
 
-![](../../images/3_6.png)  
+![](../images//3_6.png)  
 
 
 
@@ -949,7 +949,7 @@ This is how state is kept in an actor. The *copy* of the arguments are modified,
 When the coordinator has received all the messages, it must find a way to tell itself to stop, and report the results if necessary. A simple way to do this is via a "poison pill" message (listing 3.25).
 
 
-![](../../images/3_7.png)  
+![](../images//3_7.png)  
 
 
 

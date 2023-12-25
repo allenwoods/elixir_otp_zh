@@ -130,7 +130,7 @@ in
 and the output will be similar to figure 2.3.
 
 
-![](../../images/2_3.png)  
+![](../images//2_3.png)  
 
 
 
@@ -147,7 +147,7 @@ key. You will see a list of functions available in the
 module as shown in figure 2.4.
 
 
-![](../../images/2_4.png)  
+![](../images//2_4.png)  
 
 
 
@@ -168,7 +168,7 @@ accepts 3 arguments. In
 The output will look like figure 2.5:
 
 
-![](../../images/2_5.png)  
+![](../images//2_5.png)  
 
 
 
@@ -779,7 +779,7 @@ This technique is very useful for declaring preconditions in your program. What 
 documentation:
 
 
-![](../../images/2_6.png)  
+![](../images//2_6.png)  
 
 
 
@@ -874,7 +874,7 @@ Example: Parsing an MP3 file
 Elixir is brilliant for parsing binary data. In this example, we are going to extract metadata from an MP3 file. It is also a good exercise to reinforce some of the concepts you have learnt earlier. Before you parse any binary, you must know the layout. The information that we are interested in, the *ID3 tag*, is located at the *last 128 bytes* of the mp3 binary:
 
 
-![](../../images/2_7.png)  
+![](../images//2_7.png)  
 
 
 
@@ -884,7 +884,7 @@ Figure 2.7: The ID3 tag is located at the last 128 bytes of the MP3 binary.
 This means that we must somehow ignore the audio data portion, and concentrate only on the ID3 tag. The following diagram shows the layout of the ID3 tag:
 
 
-![](../../images/2_8.png)  
+![](../images//2_8.png)  
 
 
 
@@ -955,7 +955,7 @@ contains the binary contents of the file. Otherwise, the “catch-all” \_ oper
 Since we are interested only in the ID3 tag, we need to find a way to “skip ahead”. We first compute *size in bytes* of the *audio* portion of the binary. Now that we have this information, we can make use of the size of the audio portion to tell Elixir how to destructure the binary. We pattern match the MP3 binary by declaring a pattern on the left, and the mp3 variable on the right. Recall that variable assignments are on the left, and pattern matching is attempted otherwise.
 
 
-![](../../images/2_9.png)  
+![](../images//2_9.png)  
 
 
 
@@ -974,7 +974,7 @@ In order to do that, we perform another pattern match with the declared pattern 
 on the right. By declaring the appropriate number of bytes, the title, artist and other information is captured in the respective variables.
 
 
-![](../../images/2_10.png)  
+![](../images//2_10.png)  
 
 
 
@@ -997,7 +997,7 @@ Notice the recursive nature of the above definition. Translated to code:
 A diagram might illustrate this better:    
 
 
-![](../../images/2_11.png)  
+![](../images//2_11.png)  
 
 
 
@@ -1326,7 +1326,7 @@ Usually if I find that Elixir is missing a certain feature I want, I will usuall
 Let’s say I want to download the web page of a certain programming language. I go to the Erlang documentation[[8]](#u2nrvV8vG6J5gy7FjyByQX2), and I manage to find exactly what I need:
 
 
-![](../../images/2_6a.png)  
+![](../images//2_6a.png)  
 
 
 
@@ -1365,7 +1365,7 @@ Listing 2.56:  Invoking Observer, a built-in Erlang tool (Interactive Elixir)
 Since you are not running any computationally intensive processes, you won’t be seeing much action for now. But here’s a few screenshots to whet your appetite:
 
 
-![](../../images/2_7a.png)  
+![](../images//2_7a.png)  
 
 
 

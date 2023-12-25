@@ -1,1498 +1,1285 @@
-# 5   Concurrent Error Handling and Fault Tolerance with Links, Monitors, and Processes
+# 第5章 并发错误处理和容错性：链接、监视器和进程
 
+本章内容包括：
 
-This chapter covers:
+- 以 Elixir 风格处理错误
+- 链接、监视器和捕获退出
+- 实现一个监督器
 
+是否看过阿诺德·施瓦辛格主演的《终结者》？那部关于未来的刺客机器人的电影？无论终结者受到多少枪击，它总能不屈不挠地一次又一次地复原。在本章结束时，你将熟悉容错性功能，能够构建能够优雅处理错误并采取纠正措施解决问题的程序。当然，你至少目前还无法构建天网。
 
-·      Handling Errors, à la Elixir style
+在顺序程序中，通常只有一个主进程在做所有繁重的工作。如果这个进程崩溃了怎么办？通常，这意味着整个程序都崩溃了。常见的处理方法是进行*防御性编程*。这通常意味着在程序中加入
+`try`、
+`catch` 和
+`if err != nil`。
 
+但在构建并发程序时，情况就不同了。由于有不止一个进程在运行，所以有可能*另一个*进程*检测到崩溃*并随后*处理错误*。这是一个非常解放性的概念。
 
-·      Links, Monitors and Trapping Exits
+你可能听说过或读过 Erlang 的非官方座右铭——"让它崩溃"——Erlang 程序员非常喜欢这么说。因为这是 Erlang VM 中处理事务的方式。事实证明，这么做有几个很好的理由，我们很快就会了解到。这种独特的错误处理方式可能会让习惯了防御性编程的程序员不由自主地抽搐。
 
+在本节中，我们将首先了解*链接*、*监视器*、*捕获退出*和*进程*，以及它们如何共同构成构建容错系统的基础构建块。然后我们将开始构建一个简单版本的监督器，其唯一的工作是管理工作进程。这将是进入下一章的完美过渡，在那里我们可以更充分地欣赏 OTP 监督器行为所提供的便利和附加功能。
 
-·      Implementing a Supervisor
+## 5.1 链接 — 直到死亡将我们分开
 
+当一个进程链接到另一个进程时，它创建了一个双向关系。链接的进程有一个*链接集*，其中包含它所链接的所有进程的集合。如果任一进程因任何原因终止，一个*退出信号*会传播到所有与它链接的进程。此外，如果这些进程中的任何一个链接到不同的进程集，那么*相同*的退出信号也会沿着传播。
 
-Ever watched *The Terminator* played by Arnold Schwarzenegger about the assassin cyborg from the future? Whenever the terminator receives multiple shots, it just keeps coming back unfazed, over and over again. Once you are acquainted with the fault tolerance features by the end of this chapter, you can build programs that are able to handle errors gracefully and take corrective actions to fix the problem. You would not be able to build Skynet though, at least not yet.
+![](../images//5_1.png)
 
+图 5.1 当一个进程死亡时，所有链接到它的其他进程也将死亡（假设它们没有捕获退出）。
 
-In sequential programs, there is usually only one main process doing all the hard work. What happens if this process crashes? Usually, this means that the entire program has crashed. The usual approach would be to program *defensively*. This usually means lacing the program with
-`try’`s,
-`catch’`s and
-`if err != nil`s.
+如果你现在在挠头并想知道为什么这是件好事，请考虑以下示例，一群进程在进行 map-reduce 作业。如果这些进程中的任何一个崩溃并死亡，让其余进程继续工作就没有意义了。事实上，让进程相互链接将简化剩余进程的清理工作，因为其中一个进程的失败会自动导致其余链接的进程崩溃。
 
+### 5.1.1 将进程链接在一起
 
-The story is different when it comes to building concurrent programs. Since there is more than one process running, it is possible for *another* process to *detect the crash* and subsequently *handle the error*. Let that sink it for a while, because that is a very liberating notion.
+为了理解这一点，需要一个示例。使用 `Process.link/1` 创建链接，唯一的参数是要*链接到*的进程的进程 ID。这意味着 `Process.link/1` 必须在现有进程中调用。
 
+`Process.link/1` 和 `Process.monitor/1` 都是在进程的上下文中调用的
 
-You might have heard or read about the unofficial Erlang motto – “Let it crash” – that Erlang programmers are so fond of saying. That’s because that’s the way of doing things in the Erlang VM. As it turns out, there are several good reasons too, as we will soon learn. This unique way of handling errors can cause programmers who are used to defensive programming to twitch involuntarily.
+注意 `Process.link/1` 必须在现有的进程中调用，因为没有 `Process.link(link_from, link_to)` 这样的东西。`Process.monitor/1` 也是如此。
 
+打开一个 `iex` 会话。我们将创建一个与 `iex` shell 进程链接的进程。由于我们处于 shell 进程的上下文中，所以每当我们调用 `Process.link/1` 时，我们都将 shell 进程链接到我们指向的任何进程。
 
-In this section, we will first learn about *links*, *monitors*, *trapping* *exits* and *processes*, and how they come together to be the fundamental building blocks in building fault-tolerant systems. We then embark on building a simplistic version of a supervisor, whose only job is to manager worker processes. This will be a perfect segue to the next chapter, where we can then fully appreciate the convenience and additional features that the OTP Supervisor behavior provide.
+我们要创建的进程将在接收到 `:crash` 消息时崩溃。观察它崩溃时会发生什么。首先，让我们记录下当前 shell 进程的 pid：
 
+```elixir
+iex> self
+#PID<0.119.0>
+```
 
-5.1           Links – Till Death Do Us Part
+我们可以检查当前 shell 进程的链接集：
 
+```elixir
+iex> Process.info(self, :links)
+{:links, []}
+```
 
-When a process links to another, it creates a bi-directional relationship. A linked process has a *link set*, which contains a set of all the processes it is linked to. If either process terminates for whatever reason, an *exit signal* is propagated to all the processes it is linked to. Furthermore, if any of these processes is linked to a different set of processes, then the *same* exit signal is propagated along too.
+`Process.info/1` 包含有关进程的许多其他有用信息。我们使用 `Process.info(self, :links)` 是因为我们现在只对链接集感兴趣。其他有趣的信息包括邮箱中的消息总数、堆大小以及进程启动时的参数。
 
+正如预期的那样，它是空的，因为我们还没有链接任何进程。接下来，让我们创建一个只对 `:crash` 消息作出响应的进程：
 
-![](../../images/5_1.png)  
+```elixir
+iex> pid = spawn(fn -> receive do :crash -> 1/0 end end)
+#PID<0.133.0>
+```
 
+现在，我们将 shell 进程链接到我们刚刚创建的进程：
 
+```elixir
+iex> Process.link(pid)
+```
 
-Figure 5.1    When a process dies, all other processes linked to it will die too (assuming they are not trapping exits).
+`<0.133.0>` 现在在 `self` 的链接集中：
 
+```elixir
+iex> Process.info(self, :links)
+{:links, [#PID<0.133.0>]}
+```
 
-If you are scratching your head now and wonder why is this a good thing, consider the following example where a bunch of processes working on a map-reduce job. If any of these processes crashes and dies, it does not make sense for the rest of the processes to keep on working. In fact, having the processes linked would ease the clean up of the remaining processes, since a failure in one of the processes automatically brings down the rest of the linked processes.
+反过来，`self` (`<0.119.0>`) 也在 `<0.133.0>` 的链接集中：
 
+```elixir
+iex> Process.info(pid, :links)
+{:links, [#PID<0.119.0>]}
+```
 
-5.1.1        Linking Processes Together
+现在应该很清楚了，从 shell 进程中调用 `Process.link/1` 创建了一个双向链接，将 shell 进程和我们刚刚产生的进程链接在一起。
 
+现在，我们一直在等待的时刻到了——让我们崩溃这个进程，看看会发生什么：
 
-To make sense of this, an example is in order. A link is created using
-`Process.link/1`, the sole argument being the process id of the process to *link to*. This means that
-`Process.link/1`
-must be called from within an existing process.
+```elixir
+iex> send(pid, :crash)
+```
 
-
-Process.link/1 and Process.monitor/1 are called from within the context of a process
-
-
-Note that
-`Process.link/1`
-must be called from an existing process, since there is no such thing as
-`Process.link(link\_from, link\_to)`. The same applies for
-`Process.monitor/1.`
-
-
-Open up an
-`iex`
-session. We are going to create a process that is linked to the
-`iex`
-shell process. Since we are in the context of the shell process, whenever we invoke
-`Process.link/1`, we are linking the shell process to whatever process we point it.
-
-
-The process that we are going to create will crash when we send it a
-`:crash`
-message. Observe what happens when it does. First, let’s make a note of the pid of the current shell process:
-
-`iex> self`
-`#PID<0.119.0>`
-We can inspect the current link set of the shell process:
-
-`iex> Process.info(self, :links)`
-`{:links, []}`
-`Process.info/1`
-contains a bunch of other useful information about a process. We are using
-`Process.info(self, :links)`
-since we are only interested in the link set for now. Other interesting information includes total number of messages in the mailbox, heap size and the arguments that the process was spawned with.
-
-
-As expected, it is empty since we have not linked any processes yet. Next, let’s make a process that only responds to a
-`:crash`
-message:
-
-`iex> pid = spawn(fn -> receive do :crash -> 1/0 end end)`
-`#PID<0.133.0>`
-Now, we shall link the shell process to the process we have just created:
-
-`iex> Process.link(pid)`
-`<0.133.0>`
-is now in
-`self`'s link set:
-
-`iex> Process.info(self, :links)`
-`{:links, [#PID<0.133.0>]}`
-Conversely,
-`self`
-`(<0.119.0>`) is also in
-`<0.133.0>`'s link set:
-
-`iex> Process.info(pid, :links)`
-`{:links, [#PID<0.119.0>]}`
-It should now be clear that calling
-`Process.link/1`
-from within the shell process creates a bi-directional link between the shell process and process we just spawned.
-
-
-Now, the moment we have all been waiting for – Let's crash the process and see what happens:
-
-`iex> send(pid, :crash)`
-
-`11:39:40.961 [error] Error in process <0.133.0> with exit value: {badarith,[{erlang,'/',[1,0],[]}]}`
+```elixir
+11:39:40.961 [error] Error in process <0.133.0> with exit value: {badarith,[{erlang,'/',[1,0],[]}]}
  
-`** (EXIT from #PID<0.119.0>) an exception was raised:`
-`** (ArithmeticError) bad argument in arithmetic expression``:erlang./(1, 0)`
-The error is telling us that we perform some shoddy math calculation in
-`<0.133.0>`
-that caused the
-`ArithmeticError`. In addition, notice that *same* error has also brought down the shell process,
-`<0.119.0>`. To convince ourselves that the previous shell process is really gone:
+** (EXIT from #PID<0.119.0>) an exception was raised:
+** (ArithmeticError) bad argument in arithmetic expression: erlang./(1, 0)
+```
 
-`iex> self`
-`#PID<0.145.0>`
-The pid of
-`self`
-is no longer
-`<0.119.0>`.
+错误告诉我们，我们在 `<0.133.0>` 中执行了一些糟糕的数学计算，导致了 `ArithmeticError`。此外，请注意，*相同*的错误也使 shell 进程 `<0.119.0>` 崩溃。为了让我们确信之前的 shell 进程确实已经消失：
 
+```elixir
+iex> self
+#PID<0.145.0>
+```
 
-5.1.2        Chain Reaction of Exit Signals
+`self` 的 pid 不再是 `<0.119.0>`。
 
+## 5.1.2 连锁反应的退出信号
 
-In the previous example, we set up a link between two processes.  In this example, we will create a ring of linked processes so that you can see for yourself the error being propagated and re-propagated to all the links. In a terminal, create a new project:
+在前一个例子中，我们建立了两个进程之间的链接。在这个例子中，我们将创建一个链接进程的环，以便你亲自看到错误是如何被传播并重新传播到所有链接中的。在终端中，创建一个新项目：
 
 `% mix new ring`
-Open up
-`lib/ring.ex`, and add the following:
 
+打开 `lib/ring.ex`，并添加以下内容：
 
-Listing 5.1    ring.ex – Create a ring of processes that are linked together
+清单 5.1 ring.ex - 创建相互链接的进程环
 
-`defmodule Ring do`
+```elixir
+defmodule Ring do
 
-`def create_processes(n) do`
-`1..n |> Enum.map(fn _ -> spawn(fn -> loop end) end)`
-`end`
+def create_processes(n) do
+1..n |> Enum.map(fn _ -> spawn(fn -> loop end) end)
+end
 
-`def loop do`
-`receive do`
-`{:link, link_to} when is_pid(link_to) ->`
-`Process.link(link_to)`
-`loop`
+def loop do
+receive do
+{:link, link_to} when is_pid(link_to) ->
+Process.link(link_to)
+loop
 
-`:crash ->`
-`1/0`
-`end`
-`end`
-`end`
-The above should be pretty straightforward.
-`Ring.create_processes/1`
-creates
-`n`
-processes that each run the
-`loop`
-function defined before. The return value of
-`Ring.create_processes/1`
-is a list of spawned pids.
+:crash ->
+1/0
+end
+end
+end
+```
 
+上述内容应该很直接。`Ring.create_processes/1` 创建 `n` 个进程，每个进程都运行之前定义的 `loop` 函数。`Ring.create_processes/1` 的返回值是一个生成的 pids 列表。
 
-The loop function defines two types of messages that the process can receive. These are:
+循环函数定义了进程可以接收的两种类型的消息，这些消息是：
 
+- `{:link, link_to}` - 链接到由 `link_to` 指定的进程。
+- `:crash` - 故意崩溃进程。
 
-·     
-`{:link, link_to}`
-– to link to a process specified by
-`link_to`.
+5.1.3 设置环
 
+设置链接环更有趣。特别注意我们如何使用模式匹配和递归来设置环：
 
-·     
-`:crash`
-– to purposely crash the process
+清单 5.2 ring.ex - 使用递归设置链接环
 
+```elixir
+defmodule Ring do
 
-5.1.3        Setting up the Ring
+# ...
 
+def link_processes(procs) do
+link_processes(procs, [])
+end
 
-Setting up a ring of links is more interesting. In particular, pay attention to how we make use of pattern matching and recursion to set up the ring:
+def link_processes([proc_1, proc_2|rest], linked_processes) do
+send(proc_1, {:link, proc_2})
+link_processes([proc_2|rest], [proc_1|linked_processes])
+end
 
+def link_processes([proc|[]], linked_processes) do
+first_process = linked_processes |> List.last
+send(proc, {:link, first_process})
+:ok
+end
 
-Listing 5.2    ring.ex – Setting up the ring of links using recursion
+# ...
+end
+```
 
-`defmodule Ring do`
+第一个函数子句 `link_processes/1` 是 `link_processes/2` 的入口点。`link_processes/2` 函数将第二个参数初始化为空列表。`link_processes/2` 的第一个参数是一系列进程（最初未链接）：
 
-`# ...`
+清单 5.3 ring.ex - 使用模式匹配链接前两个进程
 
-`def link_processes(procs) do`
-`link_processes(procs, [])`
-`end`
+```elixir
+def link_processes([proc_1, proc_2|rest], linked_processes) do
+send(proc_1, {:link, proc_2})
+link_processes([proc_2|rest], [proc_1|linked_processes]) end
+```
 
-`def link_processes([proc_1, proc_2|rest], linked_processes) do`
-`send(proc_1, {:link, proc_2})`
-`link_processes([proc_2|rest], [proc_1|linked_processes])`
-`end`
+我们可以使用模式匹配来获取列表中的前两个进程。然后，通过发送 `{:link, link_to}` 消息，告诉第一个进程链接到第二个进程。
 
-`def link_processes([proc|[]], linked_processes) do`
-`first_process = linked_processes |> List.last`
-`send(proc, {:link, first_process})`
-`:ok`
-`end`
+接下来，递归调用 `link_processes/2`。这次，输入进程*不包括*第一个进程。相反，它被添加到第二个参数中，表示已向该进程发送 `{:link, link_to}` 消息。
 
-`# ...`
-`end`
-The first function clause,
-`link_processes/1`, is the entry point to
-`link_processes/2`. The
-`link_processes/2`
-function initializes the second argument to the empty list. The first argument of
-`link_processes/2`
-is a list of processes (initially unlinked):
+不久，输入进程列表中将只剩下一个进程。这并不难看出。那是因为我们每次递归调用 `link_processes/2`，输入列表的大小就减少一个。我们可以通过模式匹配 `[proc|[]]` 来检测这种情况：
 
+清单 5.4 ring.ex - 只剩下一个进程时的终止条件
 
-Listing 5.3    ring.ex – Linking the first two processes using pattern matching
+```elixir
+def link_processes([proc|[]], linked_processes) do
+first_process = linked_processes |> List.last
+send(proc, {:link, first_process})
+:ok end
+```
 
-`def link_processes([proc_1, proc_2|rest], linked_processes) do`
-`send(proc_1, {:link, proc_2})`
-`link_processes([proc_2|rest], [proc_1|linked_processes])``end`
-We can use pattern matching to get the first two processes in the list. We then tell the first process to link to the second process by sending it a
-`{:link, link_to}`
-message.
+最后，为了完成环，我们需要将 `proc` 链接到第一个进程。因为进程按照 LIFO（后进先出）的顺序被添加到 `linked_processes` 列表中，这意味着第一个进程是最后一个元素。一旦我们从最后一个进程创建了到第一个进程的链接，我们就完成了环。让我们
 
-
-Next,
-`link_processes/2`
-is recursively called. This time, the input processes *do not* include the first process. Instead, it is add to the second argument, signifying that this process has been sent the
-`{:link, link_to}`
-message.
-
-
-Soon enough, there will only be one process left in the input process list. It shouldn’t be hard to see why. That's because each time we recursively call
-`link_processes/2`, the size of the input list decreases by one. We can detect this condition by pattern matching
-`[proc|[]]`:
-
-
-Listing 5.4    ring.ex – The terminating condition when there is only one process left
-
-`def link_processes([proc|[]], linked_processes) do`
-`first_process = linked_processes |> List.last`
-`send(proc, {:link, first_process})`
-`:ok``end`
-Finally, in order to complete the ring, we need to link
-`proc`
-to the first process. Because processes are added to the
-`linked_processes`
-list in a LIFO (last in, first out) order, this means that the first process is the last element. Once we have created the link from the last process to the first, we have completed the ring. Let’s take this for a spin, shall we:
+试一试吧：
 
 `% iex -S mix`
-Let’s create five processes:
+
+让我们创建五个进程：
 
 `iex(1)> pids = Ring.create_processes(5)`
 `[#PID<0.84.0>, #PID<0.85.0>, #PID<0.86.0>, #PID<0.87.0>, #PID<0.88.0>]`
-Next, we link all of them up:
+
+接下来，我们将它们全部链接起来：
 
 `iex(2)> Ring.link_processes(pids)`
 `:ok`
-What is the link set of each of these processes? Let’s find out:
 
-`iex> pids |> Enum.map(fn pid -> “#{inspect pid}: #{inspect Process.info(pid, :links)}” end)`
-This gives us:
+这些进程的链接集是什么？让我们找出来：
 
-`[“#PID<0.84.0>: {:links, [#PID<0.85.0>, #PID<0.88.0>]}”,`
-`“#PID<0.85.0>: {:links, [#PID<0.84.0>, #PID<0.86.0>]}”,`
-`“#PID<0.86.0>: {:links, [#PID<0.85.0>, #PID<0.87.0>]}”,`
-`“#PID<0.87.0>: {:links, [#PID<0.86.0>, #PID<0.88.0>]}”,``“#PID<0.88.0>: {:links, [#PID<0.87.0>, #PID<0.84.0>]}”]`
-![](../../images/5_2.png)  
+`iex> pids |> Enum.map(fn pid -> "#{inspect pid}: #{inspect Process.info(pid, :links)}" end)`
 
+这给了我们：
+```elixir
+["#PID<0.84.0>: {:links, [#PID<0.85.0>, #PID<0.88.0>]}",
+"#PID<0.85.0>: {:links, [#PID<0.84.0>, #PID<0.86.0>]}",
+"#PID<0.86.0>: {:links, [#PID<0.85.0>, #PID<0.87.0>]}",
+"#PID<0.87.0>: {:links, [#PID<0.86.0>, #PID<0.88.0>]}",
+"#PID<0.88.0>: {:links, [#PID<0.87.0>, #PID<0.84.0>]}"]
+```
 
 
-Figure 5.2    A ring of linked processes. Notice that each process has two other processes in its link set.
+![图 5.2 链接进程的环。注意每个进程在其链接集中有两个其他进程。](../images//5_2.png)
 
+让我们崩溃一个随机进程！我们从 `pids` 列表中随机选择一个 pid 并向它发送 `:crash` 消息：
 
-Let’s crash a random process! We pick a random pid from the list of
-`pids`
-and send it the
-`:crash`
-message:
+```elixir
+iex(6)> pids |> Enum.shuffle |> List.first |> send(:crash)
+:crash
+```
 
-`iex(6)> pids |> Enum.shuffle |> List.first |> send(:crash)`
-`:crash`
-We can now check that none of the processes survived:
+现在我们可以检查这些进程是否都没有幸存：
 
-`iex(8)> pids |> Enum.map(fn pid -> Process.alive?(pid) end)`
-`[false, false, false, false, false]`
-5.1.4        Trapping Exits
+```elixir
+iex(8)> pids |> Enum.map(fn pid -> Process.alive?(pid) end)
+[false, false, false, false, false]
+```
 
+5.1.4 截获退出信号
 
-So far, all we have done is see the links bring down all the linked processes. What if we didn’t want the process to die when it received an error signal? We need to make the process *trap exit signals*. To make a process trap exit signals, it needs to call
-`Process.flag(:trap_exit, true)`. Calling this turns the process from a normal process to a system process.
+到目前为止，我们所做的只是看到链接将所有链接的进程一起带下来。如果我们不希望进程在接收到错误信号时死亡怎么办？我们需要使进程*截获退出信号*。要使进程截获退出信号，需要调用`Process.flag(:trap_exit, true)`。这样做将进程从普通进程转变为系统进程。
 
+普通进程与系统进程有何区别？当系统进程收到错误信号时，它不会像普通进程那样崩溃，而是将信号转换为普通消息，格式为`{:EXIT, pid, reason}`，其中`pid`是被终止的进程，`reason`是终止的原因。
 
-What’s the difference between a normal process and a system process? When a system process receives an error signal, instead of crashing like normal processes, it can turn the signal into a regular message that looks like
-`{:EXIT, pid, reason}`, where
-`pid`
-is the process that was terminated and
-`reason`
-is the reason for the termination.
+这样，系统进程可以对被终止的进程采取纠正措施。让我们看看这是如何与两个进程一起工作的，类似于本节中的第一个示例。
 
+首先，我们注意到当前的shell进程：
 
-This way, the system process can take corrective action on the terminated process. Let’s see how this works with two processes, similar to the first example in this section.
+```
+iex> self
+#PID<0.58.0>
+```
 
+接下来，通过使其截获退出来将shell进程转变为系统进程：
 
-We first note the current shell process:
+```
+iex> Process.flag(:trap_exit, true)
+false
+```
 
-`iex> self`
-`#PID<0.58.0>`
-Next, turn the shell process into a system process by making it trap exits:
+请注意，就像`Process.link/1`一样，这必须在调用进程内部调用。然后，我们创建一个将要崩溃的进程：
 
-`iex> Process.flag(:trap_exit, true)`
-`false`
-Note that just like
-`Process.link/1`, this must be called from within the calling process. Once again, we create a process that we are going to crash:
+```
+iex> pid = spawn(fn -> receive do :crash -> 1/0 end end)
+#PID<0.62.0>
+```
 
-`iex> pid = spawn(fn -> receive do :crash -> 1/0 end end)`
-`#PID<0.62.0>`
-Then link the newly created process to the shell process:
+然后将新创建的进程链接到shell进程：
 
-`iex> Process.link(pid)`
-`true`
-Now, what happens if we try to crash the newly created process?
+```
+iex> Process.link(pid)
+true
+```
 
-`iex> send(pid, :crash)`
-`:crash``14:37:10.995 [error] Error in process <0.62.0> with exit value: {badarith,[{erlang,’/‘,[1,0],[]}]}`
-First, let’s check if the shell process survived:
+现在，如果我们尝试崩溃新创建的进程会发生什么？
 
-`iex> self`
-`#PID<0.58.0>`
-Yup! It’s the same process as before. Now, let’s see what message the shell process receive:
+```
+iex> send(pid, :crash)
+:crash
+14:37:10.995 [error] Error in process <0.62.0> with exit value: {badarith,[{erlang,’/‘,[1,0],[]}]}
+```
 
-`iex> flush`
-`{:EXIT, #PID<0.62.0>, {:badarith, [{:erlang, :/, [1, 0], []}]}}`
-As expected, because the shell process receives a message in the form of
-`{:EXIT, pid, reason}`. We will exploit this later when we learn how to create our own supervisor process.
+首先，让我们检查shell进程是否存活：
 
+```
+iex> self
+#PID<0.58.0>
+```
 
-5.1.5        Linking a terminated/non-existent process
+是的！它与之前的进程相同。现在，让我们看看shell进程收到了什么消息：
 
+```
+iex> flush
+{:EXIT, #PID<0.62.0>, {:badarith, [{:erlang, :/, [1, 0], []}]}}
+```
 
-Let’s try to link a dead process see what happens. First, let’s create a process that exits quickly:
+正如预期的，因为shell进程以`{:EXIT, pid, reason}`的形式接收到消息。我们稍后在学习如何创建我们自己的监督者进程时会利用这一点。
 
-`iex> pid = spawn(fn -> IO.puts “Bye, cruel world.” end)`
-`Bye, cruel world.`
-`#PID<0.80.0>`
-We make sure that the process is really dead:
+5.1.5 链接已终止/不存在的进程
 
-`iex> Process.alive? pid`
-`false`
-Then we’ll attempt to link a dead process:
+让我们尝试链接一个已死的进程，看看会发生什么。首先，我们创建一个很快就退出的进程：
 
-`iex> Process.link(pid)`
-`** (ErlangError) erlang error: :noproc``:erlang.link(#PID<0.62.0>)`
-`Process.link/1`
-makes sure that you are linking to a non-terminated process, and errors out if you try to link to a terminated or non-existent process.
+```
+iex> pid = spawn(fn -> IO.puts “Bye, cruel world.” end)
+Bye, cruel world.
+#PID<0.80.0>
+```
 
+我们确保这个进程真的死了：
 
-5.1.6        spawn\_link/3: spawn and link in One Atomic Step
+```
+iex> Process.alive? pid
+false
+```
 
+然后我们尝试链接一个已死的进程：
 
-Most of the time when spawning a process, you would want to use
-`spawn_link/3`. Is
-`spawn_link/3`
-like a glorified wrapper for
-`spawn/3`
-and
-`link/1`? In order words, is
-`spawn_link(Worker, :loop, [])`
-the same as doing
+```
+iex> Process.link(pid)
+** (ErlangError) erlang error: :noproc:erlang.link(#PID<0.62.0>)
+```
 
-`pid = spawn(Worker, :loop, [])`
-`Process.link(pid)`
-Turns out, the story is slightly more complicated than that.
-`spawn_link/3`
-does the spawning and linking in *one atomic operation*. Why is this important? This is because when
-`link/1`
-is given a process that has terminated or does not exist, it throws an error. Since
-`spawn/3`
-and
-`link/1`
-are two separate steps,
-`spawn/3`
-could very well fail, causing the subsequent call to
-`link/1`
-to raise an exception.
+`Process.link/1`确保你正在链接到一个未终止的进程，并且如果你尝试链接到一个已终止或不存在的进程，它会报错。
 
+5.1.6 `spawn_link/3`：在一个原子步骤中产生和链接
 
-5.1.7        Exit Messages
+大多数时候，当生成一个进程时，你会想使用`spawn_link/3`。`spawn_link/3`是否像`spawn/3`和`link/1`的荣耀包装？换句话说，是否执行`spawn_link(
 
+Worker, :loop, [])`与执行以下操作相同：
 
-There are three flavors of :`EXIT`
-messages. You have seen the first one where the reason for termination is returned describes the exception.
+```
+pid = spawn(Worker, :loop, [])
+Process.link(pid)
+```
 
+事实证明，这个故事比这更复杂。`spawn_link/3`在一个原子操作中完成生成和链接。为什么这很重要？这是因为当`link/1`给出一个已终止或不存在的进程时，它会抛出一个错误。由于`spawn/3`和`link/1`是两个单独的步骤，`spawn/3`很可能失败，导致后续调用`link/1`引发异常。
 
-Normal Termination
+5.1.7 退出消息
 
+有三种类型的`:EXIT`消息。你已经看到了第一种，其中返回的终止原因描述了异常。
 
-Processes send :`EXIT`
-messages when the process terminates normally. This means that the process doesn’t have any more code to run. For example, given this process whose only job is to receive an
-`:ok`
-message then exit:
+正常终止
 
-`iex> pid = spawn(fn -> receive do :ok -> :ok end end)`
-`#PID<0.73.0>`
-Remember to link the process:
+进程在正常终止时发送`:EXIT`消息。这意味着进程没有更多的代码要运行。例如，给出这个进程，其唯一的任务是接收`:ok`消息然后退出：
 
-`iex> Process.link(pid)`
-`true`
-We then send the process the
-`:ok`
-message, causing it to exit normally:
+```
+iex> pid = spawn(fn -> receive do :ok -> :ok end end)
+#PID<0.73.0>
+```
 
-`iex> send(pid, :ok)`
-`:ok`
-Now, let’s reveal the message that the shell process received:
+记得链接这个进程：
 
-`iex> flush`
-`{:EXIT, #PID<0.73.0>, :normal}`
-Note that for *normal* process that is linked to a process that has just exited normally (i.e. with a
-`:normal`
-as the reason), then the former process is *not* terminated.
+```
+iex> Process.link(pid)
+true
+```
 
+然后我们发送`:ok`消息给这个进程，使其正常退出：
 
-Forcefully Killing a Process
+```
+iex> send(pid, :ok)
+:ok
+```
 
+现在，让我们揭示shell进程收到的消息：
 
-There is one more way a process can die, and that is using
-`Process.exit(pid, :kill)`. This sends an *un-trappable* exit signal is sent to the targeted process. This means that even though the process might be trapping exits, this is one signal that it cannot trap.  Let’s set up the shell process to trap exits:
+```
+iex> flush
+{:EXIT, #PID<0.73.0>, :normal}
+```
 
-`iex> self`
-`#PID<0.91.0>`
+请注意，对于*正常*链接到刚刚正常退出（即以`:normal`为原因）的进程的进程，前者进程*不会*被终止。
 
-`iex> Process.flag(:trap_exit, true)``false`
-When we try to kill it using
-`Process.exit/2`
-with a reason other than
-`:kill`:
+强制杀死进程
 
-`iex> Process.exit(self, :whoops)`
-`true`
+进程死亡还有一种方式，那就是使用`Process.exit(pid, :kill)`。这会向目标进程发送一个*无法截获*的退出信号。这意味着即使进程可能正在截获退出，这也是它无法截获的一个信号。让我们设置shell进程来截获退出：
 
-`iex> self`
-`#PID<0.91.0>`
+```
+iex> self
+#PID<0.91.0>
 
-`iex> flush`
-`{:EXIT, #PID<0.91.0>, :whoops}`
+iex> Process.flag(:trap_exit, true)
+false
+```
 
-`iex> self``#PID<0.91.0>`
-Here, we have shown that the shell process has successfully trapped the signal since it receives the
-`{:EXIT, pid, reason}`
-message in its mailbox. Now, lets try
-`Process.exit(self, :kill)`:
+当我们尝试使用`:kill`以外的原因使用`Process.exit/2`杀死它时：
 
-`iex> Process.exit(self, :kill)`
-`** (EXIT from #PID<0.91.0>) killed`
+```
+iex> Process.exit(self, :whoops)
+true
 
-`iex> self``#PID<0.103.0>`
-This time, notice that the shell process restarts and the process id is no longer the one we had before.
+iex> self
+#PID<0.91.0>
 
+iex> flush
+{:EXIT, #PID<0.91.0>, :whoops}
 
-5.1.8        Ring, revisited
+iex> self
+#PID<0.91.0>
+```
 
+在这里，我们已经显示了shell进程已成功截获该信号，因为它在其邮箱中收到了`{:EXIT, pid, reason}`消息。现在，让我们尝试`Process.exit(self, :kill)`：
 
-Consider the ring again. Only two processes are trapping exits. This is what we want to create:
+```
+iex> Process.exit(self, :kill)
+** (EXIT from #PID<0.91.0>) killed
 
+iex> self
+#PID<0.103.0>
+```
 
-![](../../images/5_3.png)  
+这次，请注意shell进程重新启动，进程id不再是我们之前的那个。
 
+5.1.8 重访环形链
 
+再次考虑环形链。只有两个进程设置了退出陷阱。我们想创建的是这样的：
 
-Figure 5.3 What happens when process 2 is killed?
+![](../images//5_3.png)
 
+图 5.3 当进程 2 被终止时会发生什么？
 
-Open up
-`lib/ring.ex`
-again, and add messages let the process trap exit and handle
-`{:EXIT, pid, reason}`:
+再次打开 `lib/ring.ex`，添加消息来让进程设置退出陷阱并处理 `{:EXIT, pid, reason}`：
 
+清单 5.5 ring.ex - 让进程处理 :EXIT 和 :DOWN 消息
 
-Listing 5.5    ring.ex – Let the process handle :EXIT and :DOWN messages
+```elixir
+defmodule Ring do
+# …
 
-`defmodule Ring do`
-`# …`
+def loop do
+  receive do
+    {:link, link_to} when is_pid(link_to) ->
+      Process.link(link_to)
+      loop
 
-`def loop do`
-`receive do`
-`{:link, link_to} when is_pid(link_to) ->`
-`Process.link(link_to)`
-`loop`
+    :trap_exit ->
+      Process.flag(:trap_exit, true)           #1
+      loop
 
-`:trap_exit ->`
-`Process.flag(:trap_exit, true)                #1`
-`loop`
+    :crash ->
+      1/0
 
-`:crash ->`
-`1/0`
+    {:EXIT, pid, reason} ->                   #2
+      IO.puts "#{inspect self} received {:EXIT, #{inspect pid}, #{reason}}"
+      loop
 
-`{:EXIT, pid, reason} ->                         #2`
-`IO.puts “#{inspect self} received {:EXIT, #{inspect pid}, #{reason}}”`
-`loop`
+  end
+end
+end
+```
+#1 处理设置退出陷阱的消息
 
-`end`
-`end`
-`end`
-#1 Handle a message to trap exits  
+#2 处理检测 :DOWN 消息
 
+进程 1 和进程 2 设置了退出陷阱。所有进程彼此链接。现在，当 2 被终止时会发生什么？我们可以创建三个进程来找出答案：
 
-#2 Handle a message to detect :DOWN messages
+```elixir
+iex> [p1, p2, p3] = Ring.create_processes(3)
+[#PID<0.97.0>, #PID<0.98.0>, #PID<0.99.0>]
+```
+并将它们链接起来：
 
+```elixir
+iex> [p1, p2, p3] |> Ring.link_processes
+```
+我们设置前两个进程来设置退出陷阱。
 
-Process 1 and Process 2 are trapping exits. All Processes are linked to each other. Now, what happens when 2 is killed? We can create three processes to find out:
+```elixir
+iex> send(p1, :trap_exit)
+iex> send(p2, :trap_exit)
+```
+观察我们终止 `p2` 时会发生什么：
 
-`iex> [p1, p2, p3]  = Ring.create_processes(3)`
-`[#PID<0.97.0>, #PID<0.98.0>, #PID<0.99.0>]`
-And link all of them together:
+```elixir
+iex> Process.exit(p2, :kill)
+#PID<0.97.0> received {:EXIT, #PID<0.98.0>, killed}#PID<0.97.0> received {:EXIT, #PID<0.99.0>, killed}
+```
+最后检查，只有 `p1` 存活：
 
-`iex> [p1, p2, p3] |> Ring.link_processes`
-We set the first two processes to trap exits.
+```elixir
+iex> [p1, p2, p3] |> Enum.map(fn p -> Process.alive?(p) end)
+[true, false, false]
+```
+这里是教训：
 
-`iex> send(p1, :trap_exit)`
-`iex> send(p2, :trap_exit)`
-Observer what happens when we kill
-`p2`:
+如果一个进程设置了退出陷阱，并且它被使用 `Process.exit(pid, :kill)` 目标终止，它还是会被终止。当它死亡时，它会向它的链接集中的进程传播一个 `{:EXIT, #PID<0.98.0>, :killed}` 消息，这*可以*被陷阱捕获。
 
-`iex> Process.exit(p2, :kill)`
-`#PID<0.97.0> received {:EXIT, #PID<0.98.0>, killed}``#PID<0.97.0> received {:EXIT, #PID<0.99.0>, killed}`
-As a final check, only
-`p1`
-survives:
+下面是一个表格，总结所有不同的情况：
 
-`iex> [p1, p2, p3] |> Enum.map(fn p -> Process.alive?(p) end)`
-`[true, false, false]`
-Here’s the lesson:
+表 5.1 链接集中的进程退出时可能发生的不同情况
 
+| 当链接集中的进程…                | 设置退出陷阱？ | 那么会发生什么？                   |
+| ------------------------------- | -------------- | --------------------------------- |
+| 正常退出                        | 是             | 接收 `{:EXIT, pid, :normal}`      |
+|                                 | 否             | 无任何反应                        |
+| 使用 `Process.exit(pid, :kill)` | 是             | 接收 `{:EXIT, pid, :normal}`      |
+| 终止                            | 否             | 以 ``:killed`` 终止               |
+| 使用 `Process.exit(pid, other)` | 是             | 接收 `{:EXIT, pid, other }`       |
+| 终止                            | 否             | 以 `other` 终止                   |
 
-If a process is trapping exits, and it is targeted to be killed using
-`Process.exit(pid, :kill)`, it is going to get killed anyway. When it dies, it propagates a
-`{:EXIT, #PID<0.98.0>, :killed}`
-message to the processes in its link set, which *can* be trapped.
+5.2 监视器
 
+有时候，您不需要双向链接。您只是想让一个进程知道另一个进程是否已经宕机，而不影响监视进程本身。例如，在客户端-服务器架构中，如果客户端由于某种原因宕机，服务器不应该随之宕机。
 
-Here’s a table to summarize all the different scenarios:
+这就是*监视器*的用途。它们在监视进程和被监视的进程之间建立单向链接。让我们来做一些监视工作！我们创建一个我们最喜欢的可崩溃进程：
 
+```elixir
+iex> pid = spawn(fn -> receive do :crash -> 1/0 end end)
+#PID<0.60.0>
+```
 
-Table 5. 1    The different scenarios that can happen when a process in a link set exits
+然后，我们告诉shell去监视这个进程：
 
+```elixir
+iex> Process.monitor(pid)
+#Reference<0.0.0.80>
+```
 
+注意返回值是一个对监视器的*引用*。
 
+引用是独一无二的，可以用来识别消息的来源，尽管这是后面章节的主题。
 
-|  |  |  |
-| --- | --- | --- |
-| 
-When a process in its link set …
- | 
-Trapping exits?
- | 
-What happens then?
- |
-| Exits normally | Yes | Receives
-`{:EXIT, pid, :normal}`
-|
-|   | No | Nothing |
-| Killed using
-`Process.exit(pid, :kill)`
-| Yes | Receives
-`{:EXIT, pid, :normal}`
-|
-|   | No | Terminates with
-``:killed``
-|
-| Killed using
-`Process.exit(pid, other)`
-| Yes | Receives
-`{:EXIT, pid, other }`
-|
-|   | No | Terminates with
-`other`
-|
+现在，让进程崩溃并看看会发生什么：
 
+```elixir
+iex> send(pid, :crash)
+:crash
 
-5.2           Monitors
+iex>
+18:55:20.381 [error] Error in process <0.60.0> with exit value: {badarith,[{erlang,’/‘,[1,0],[]}]}`nil
+```
 
+让我们检查shell进程的邮箱：
 
-Sometimes, you don’t need a bidirectional link. You just want the process to know if some other process has gone down, and not affect anything about the monitoring process. For example, in a client-server architecture, if the client goes down for whatever reason, the server shouldn’t go down.
+```elixir
+iex> flush
+{:DOWN, #Reference<0.0.0.80>, :process, #PID<0.60.0>,{:badarith, [{:erlang, :/, [1, 0], []}]}}
+```
 
+注意引用与`Process.monitor/1`返回的引用相匹配。
 
-That’s what *monitors* are for. They set up a uni-directional link between the monitoring process and the process to be monitored. Let’s do some monitoring! We create our favorite crash-able process:
+5.2.1 监视已终止/不存在的进程
 
-`iex> pid = spawn(fn -> receive do :crash -> 1/0 end end)`
-`#PID<0.60.0>`
-Then, we tell the shell to monitor this process:
+当您尝试监视一个已终止/不存在的进程时会发生什么？继续我们之前的例子，我们首先确信`pid`确实已经死亡：
 
-`iex> Process.monitor(pid)`
-`#Reference<0.0.0.80>`
-Notice that the return value is a *reference* to the monitor.
+```elixir
+iex> Process.alive?(pid)
+false
+```
 
+然后让我们再次尝试监视：
 
-A reference is unique, and can be used to identify where the message comes from, although that’s a topic for a chapter later on.
+```elixir
+iex(11)> Process.monitor(pid)
+#Reference<0.0.0.114>
+```
 
+`Process.monitor/1`正常处理，不像`Process.link/1`，它会抛出一个`:noproc`错误。shell进程收到什么消息？
 
-Now, crash the process and see what happens:
+```elixir
+iex(12)> flush
+{:DOWN, #Reference<0.0.0.114>, :process, #PID<0.60.0>, :noproc}
+```
 
-`iex> send(pid, :crash)`
-`:crash`
+我们得到一个看起来类似的`:noproc`消息，不过它不是错误，而是一个平常的消息存在于邮箱中。因此，这个消息可以从邮箱中通过模式匹配得到。
 
-`iex>`
-`18:55:20.381 [error] Error in process <0.60.0> with exit value: {badarith,[{erlang,’/‘,[1,0],[]}]}``nil`
-Let’s inspect the shell processes’ mailbox:
+5.3 实现一个监督器
 
-`iex> flush`
-`{:DOWN, #Reference<0.0.0.80>, :process, #PID<0.60.0>,``{:badarith, [{:erlang, :/, [1, 0], []}]}}`
-Notice that the reference matches the reference returned from
-`Process.monitor/1`.
+一个监督器是一个仅仅负责监视一个或多个进程的进程。这些进程可以是工作进程，甚至是其他监督器。
 
+![](../images//5_4.png)
 
-5.2.1        Monitoring a Terminated/Non-Existent Process
+图5.4 一个监督树可以与其他监督树层叠。监督器和工作进程都可以被监督。
 
+监督器和工作进程被安排在一个监督树中。如果任何工作进程死亡，监督器可以重启死掉的工作进程，并且可能根据特定的*重启策略*重启监督树中的其他工作进程。什么是工作进程？它们通常是实现了GenServer, GenFSM或GenEvent行为的进程。
 
-What happens when you try to monitor a terminated/non-existent process? Continue from our previous example, we first convince ourselves that
-`pid`
-is indeed dead:
+到目前为止，您已经拥有了构建自己的监督器所需的所有构件。一旦您完成了这个部分，监督器将不再显得神奇，尽管这并不意味
 
-`iex> Process.alive?(pid)`
-`false`
-Then let’s try monitoring again:
+着它们不再令人敬畏。
 
-`iex(11)> Process.monitor(pid)`
-`#Reference<0.0.0.114>`
-`Process.monitor/1`
-processes without incident, unlike
-`Process.link/1`, which throws an
-`:noproc`
-error. What message does the shell process get?
+5.3.1 监督器API
 
-`iex(12)> flush`
-`{:DOWN, #Reference<0.0.0.114>, :process, #PID<0.60.0>, :noproc}`
-We get a similar looking
-`:noproc`
-message, except that it is not an error but a plain old message lying in the mailbox. Therefore, this message can be pattern matched from the mailbox.
+下表列出了监督器的API以及简要描述：
 
+表5.2 我们将实现的API总结
 
-5.3           Implementing a Supervisor
-
-
-A supervisor is a process whose only job is to monitor one or more processes. These processes can be worker processes or even other supervisors.
-
-
-![](../../images/5_4.png)  
-
-
-
-Figure 5.4    A supervision tree can be layered with other supervision trees. Both supervisors and workers can be supervised.
-
-
-Supervisors and workers are arranged in a supervision tree. If any of the workers die, the supervisor can restart the dead worker, and potentially other workers in the supervision tree, based on certain *restart strategies*. What are worker processes? They are usually processes that have implemented the GenServer, GenFSM or GenEvent behaviors.
-
-
-So far, you have all the building blocks needed to build your own Supervisor. Once you are done with this section, Supervisors will not seem magical anymore, although that does not make them any less awesome.
-
-
-5.3.1        Supervisor API
-
-
-The follow table lists the API of the supervisor along with a brief description:
-
-
-Table 5.2    A summary of APIs that we will implement
-
-
-
-
-|  |  |
+| API | 描述 |
 | --- | --- |
-| 
-API
- | 
-Description
- |
-|
-`start_link(child_spec_list)`
-| Given a list of child specifications (possibly empty), start the supervisor process and corresponding children |
-|
-`start_child(supervisor, child_spec)`
-| Given a supervisor pid and a child specification, start the child process and link it to the supervisor. |
-|
-`terminate_child(supervisor, pid)`
-| Given a supervisor pid and a child pid, terminate the child. |
-|
-`restart_child(supervisor, pid, child_spec)`
-| Given a supervisor pid, child pid, and a child specification, restart the child process and initialize the child process with the child specification. |
-|
-`count_children(supervisor)`
-| Given the supervisor pid, return the number of child processes. |
-|
-`which_children(supervisor)`
-| Given the supervisor pid, return the state of the supervisor. |
+| `start_link(child_spec_list)` | 给定一个可能为空的子规范列表，启动监督器进程和相应的子进程 |
+| `start_child(supervisor, child_spec)` | 给定一个监督器pid和一个子规范，启动子进程并将其链接到监督器 |
+| `terminate_child(supervisor, pid)` | 给定一个监督器pid和一个子pid，终止子进程 |
+| `restart_child(supervisor, pid, child_spec)` | 给定一个监督器pid、子pid和一个子规范，重启子进程并用子规范初始化子进程 |
+| `count_children(supervisor)` | 给定监督器pid，返回子进程的数量 |
+| `which_children(supervisor)` | 给定监督器pid，返回监督器的状态 |
 
+实现上述API将使我们对实际OTP监督器在底层如何工作有一个非常好的理解。
 
-Implementing the above API will give us a pretty good grasp of how the actual OTP Supervisor works under the hood.
+5.3.2 构建我们自己的监督器
 
+像往常一样，我们从一个新的`mix`项目开始。由于叫它`Supervisor`不够原创，而`MySupervisor`又太无聊，让我们给它一些古英语的风格，称之为`ThySupervisor`：
 
-5.3.2        Building Our Own Supervisor
+```elixir
+% mix new thy_supervisor
+```
 
+作为一种复习，我们将使用GenServer行为构建我们的监督器。您可能会惊讶地发现，监督器行为实际上实现了GenServer行为。
 
-As usual, we start with a new
-`mix`
-project. Since calling it
-`Supervisor`
-is unoriginal, and
-`MySupervisor`
-is boring, let’s give it some Old English flair and call it
-`ThySupervisor`
-instead:
+```elixir
+defmodule ThySupervisor do
+use GenServer
+end
+```
 
-`% mix new thy_supervisor`
-As a form of revision, we are going to build our supervisor using the GenServer behavior. You might be surprised to know that the supervisor behavior does, in fact, implement the GenServer behavior.
+5.3.3 start_link（启动链接）的子规范列表
 
-`defmodule ThySupervisor do`
-`use GenServer`
-`end`
-5.3.3        start\_link(child\_spec\_list)
+首先实现 `start_link/1`。
 
+```elixir
+defmodule ThySupervisor do
+  use GenServer
 
-The first thing is to implement
-`start_link/1`.
+  def start_link(child_spec_list) do
+    GenServer.start_link(__MODULE__, [child_spec_list])
+  end
+end
+```
 
-`defmodule ThySupervisor do`
-`use GenServer`
+这是创建监督进程的主要入口点。在这里，我们调用 `GenServer.start_link/2`，传入模块的名称和包含 `child_spec_list` 的列表。`child_spec_list` 指定了（可能为空的）*子规范*列表。
 
-`def start_link(child_spec_list) do`
-`GenServer.start_link(__MODULE__, [child_spec_list])`
-`end`
-`end`
-This is the main entry point to creating a supervisor process. Here, we call
-`GenServer.start_link/2`
-with the name of the module and passing in a list with a single element of
-`child_spec_list`.
-`child_spec_list`
-specifies a list of (potentially empty) *child specifications*.
+这是一种告诉监督者它应该管理哪些*类型*的进程的方式。两个（相似）工作进程的子规范可能看起来像这样：`[{ThyWorker, :start_link, []}, {ThyWorker, :start_link, []}]`。
 
+回想一下，`GenServer.start_link/2` 期望实现 `ThySupervisor.init/1` 回调。它将第二个参数（列表）传递给 `:init/1`。让我们来做：
 
-This is a fancy way of telling the supervisor what *kinds* of processes it should manage. A child specification for two (similar) workers could look like
-`[{ThyWorker, :start_link, []}, {ThyWorker, :start_link, []}]`.
+列表 5.6 thy_supervisor.ex - start_link/1 和 init 回调/1。注意，在 init/1 回调中捕获了退出。
 
+```elixir
+defmodule ThySupervisor do
+  use GenServer
 
-Recall that
-`GenServer.start_link/2`
-expects the
-`ThySupervisor.init/1`
-callback to be implemented. It passes the second argument (the list) into
-`:init/1`. Let’s do that:
+  #######
+  # API #
+  #######
 
+  def start_link(child_spec_list) do
+    GenServer.start_link(__MODULE__, [child_spec_list])
+  end
 
-Listing 5.6    thy\_supervisor.ex – start\_link/1 and init callback/1. Notice that exits are being trapped in the init/1 callback.
+  ######################
+  # 回调函数 #
+  ######################
 
-`defmodule ThySupervisor do`
-`use GenServer`
+  def init([child_spec_list]) do
+    Process.flag(:trap_exit, true)                      #1
+    state = child_spec_list
+    |> start_children
+    |> Enum.into(HashDict.new)
 
-`#######`
-`# API #`
-`#######`
+    {:ok, state}
+  end
+end
+```
+#1 让监督进程捕获退出
 
-`def start_link(child_spec_list) do`
-`GenServer.start_link(__MODULE__, [child_spec_list])`
-`end`
+我们在这里做的第一件事就是让监督进程捕获退出。这样，它就可以接收来自其子进程的退出信号作为正常消息。
 
-`######################`
-`# Callback Functions #`
-`######################`
-
-`def init([child_spec_list]) do`
-`Process.flag(:trap_exit, true)                      #1`
-`state = child_spec_list`
-`|> start_children`
-`|> Enum.into(HashDict.new)`
-
-`{:ok, state}`
-`end`
-`end`
-#1 Make the supervisor process trap exits
-
-
-The first thing we do here is to let the supervisor process trap exits. This is so that it can receive exit signals from its children as normal messages.
-
-
-There is quite a bit going on in the lines that follow. The
-`child_spec_list`
-is fed into
-`start_children/1`. This function, as you will soon see, spawns the child processes and returns a list of tuples. Each tuple is a pair that contains the pid of the newly spawned child and the child specification. For example:
+接下来的几行中有很多事情发生。`child_spec_list` 被输入到 `start_children/1`。很快您将看到，此函数生成子进程并返回一个元组列表。每个元组都是一对，包含新生成子进程的 pid 和子规范。例如：
 
 `[{<0.82.0>, {ThyWorker, :init, []}}, {<0.84.0>, {ThyWorker, :init, []}}]`
-This list is then fed into
-`Enum.into/2`. By passing in
-`HashDict.new`
-as the second argument, we are effectively transforming the list of tuples into a
-`HashDict`, with the pids of the child processes as the keys and the child specifications as the values.
+然后这个列表被输入到 `Enum.into/2`。通过将 `HashDict.new` 作为第二个参数传递，我们实际上将元组列表转换为 `HashDict`，子进程的 pid 作为键，子规范作为值。
 
+使用 enum.into 将可枚举转换为可收集
 
-transforming an enumerable to a collectable with enum.into
+`Enum.into/2`（和接受额外转换函数的 `Enum.into/3`）将一个可枚举（如 `List`）插入到一个可收集的对象中（如 `HashDict`）。这很有帮助，因为 HashDict 知道如果它得到一个元组，第一个元素将成为键，第二个元素将成为值：
 
-
-`Enum.into/2`
-(and
-`Enum.into/3`
-that takes an additional transformation function) takes an enumerable (like a
-`List`) and inserts it into a
-`Collectable`
-(like a
-`HashDict`. This is very helpful because HashDict knows that if it gets a tuple, the first element becomes the key, and the second element becomes the value:
-
-`iex> h = [{:pid1, {:mod1, :fun1, :arg1}}, {:pid2, {:mod2, :fun2, :arg2}}] |> Enum.into(HashDict.new)`
-This returns a HashDict:
+```elixir
+iex> h = [{:pid1, {:mod1, :fun1, :arg1}}, {:pid2, {:mod2, :fun2, :arg2}}] |> Enum.into(HashDict.new)
+```
+这将返回一个 HashDict：
 
 `#HashDict<[pid2: {:mod2, :fun2, :arg2}, pid1: {:mod1, :fun1, :arg1}]>`
-The key can be retrieved like so:
+可以这样检索键：
 
-`iex> HashDict.fetch(h, :pid2)`
-`{:ok, {:mod2, :fun2, :arg2}}`
-The resulting
-`HashDict`
-of pid and child specification mappings forms the *state* of the supervisor process, which we return in a
-`{:ok, state}`
-tuple, which is expected of
-`init/1`.
+```elixir
+iex> HashDict.fetch(h, :pid2)
+{:ok, {:mod2, :fun2, :arg2}}
+```
+生成的 `HashDict` 包含 pid 和子规范映射，构成了监督进程的*状态*，我们以 `{:ok, state}` 元组返回，这是 `init/1` 所期望的。
 
+start_child（监
 
-start\_child(supervisor, child\_spec)
+督者，子规范）
 
+我还没有描述在 `init/1` 中使用的私有函数 `start_children/1` 中发生的事情。让我们稍微跳过一点，先看看 `start_child/2`。这个函数接收监督者 pid 和子规范，并将子进程附加到监督者：
 
-I have not described what goes on in the private function
-`start_children/1`
-that is used in
-`init/1`. Let’s skip ahead a little and look at
-`start_child/2`
-first. This function takes in the supervisor pid and child specification and attaches the child to the supervisor:
+列表 5.7 thy_supervisor.ex - 启动单个子进程
 
+```elixir
+defmodule ThySupervisor do
+  use GenServer
 
-Listing 5.7    thy\_supervisor.ex – Starting a single child process
+  #######
+  # API #
+  #######
 
-`defmodule ThySupervisor do`
-`use GenServer`
-
-`#######`
-`# API #`
-`#######`
-
-`def start_child(supervisor, child_spec) do`
-`GenServer.call(supervisor, {:start_child, child_spec})`
-`end`
+  def start_child(supervisor, child_spec) do
+    GenServer.call(supervisor, {:start_child, child_spec})
+  end
   
-`######################`
-`# Callback Functions #`
-`######################`
+  ######################
+  # 回调函数 #
+  ######################
 
-`def handle_call({:start_child, child_spec}, _from, state) do`
-`case start_child(child_spec) do`
-`{:ok, pid} ->`
-`new_state = state |> HashDict.put(pid, child_spec)`
-`{:reply, {:ok, pid}, new_state}`
-`:error ->`
-`{:reply, {:error, “error starting child”}, state}`
-`end`
-`end`
+  def handle_call({:start_child, child_spec}, _from, state) do
+    case start_child(child_spec) do
+      {:ok, pid} ->
+        new_state = state |> HashDict.put(pid, child_spec)
+        {:reply, {:ok, pid}, new_state}
+      :error ->
+        {:reply, {:error, "error starting child"}, state}
+    end
+  end
 
-`#####################`
-`# Private Functions #`
-`#####################`
+  #####################
+  # 私有函数 #
+  #####################
 
-`defp start_child({mod, fun, args}) do`
-`case apply(mod, fun, args) do`
-`pid when is_pid(pid) ->`
-`Process.link(pid)`
-`{:ok, pid}`
-`_ ->`
-`:error`
-`end`
-`end`
-`end`
-The
-`start_child/2`
-API call makes a synchronous call request to the supervisor. The request contains a tuple containing the
-`:start_child`
-atom and child specification. The request is handled by the
-`handle_call({:start_child, child_spec}, _, _)`
-callback. It attempts to start a new child process using the
-`start_child/1`
-private function.
+  defp start_child({mod, fun, args}) do
+    case apply(mod, fun, args) do
+      pid when is_pid(pid) ->
+        Process.link(pid)
+        {:ok, pid}
+      _ ->
+        :error
+    end
+  end
+end
+```
+`start_child/2` API 调用向监督者发出同步调用请求。请求包含一个包含 `:start_child` 原子和子规范的元组。请求由 `handle_call({:start_child, child_spec}, _, _)` 回调处理。它尝试使用 `start_child/1` 私有函数启动一个新的子进程。
 
+成功后，调用进程接收到 `{:ok, pid}`，监督者的状态更新为 `new_state`。否则，调用进程接收到带有 `:error` 标签的元组，并提供原因。
 
-Upon success, the caller process receives
-`{:ok, pid}`
-and the state of the supervisor is updated to
-`new_state`. Otherwise, the caller process receives as tuple tagged with
-`:error`
-and is provided a reason.
+监督者和使用 spawn_link 生成子进程
 
+这里有一个重要的点，我们在这里做了一个很大的假设。假设是我们假设创建的进程链接到监督进程。这意味着什么？这意味着我们假设进程是使用 `spawn_link` 生成的。事实上，在 OTP 监督者行为中假设进程是使用 `spawn_link` 创建的。
 
-Supervisor and Spawning Child Processes with spawn\_link
+启动子进程
 
+现在，我们可以看看 `start_children/1` 函数，它在 `init/1` 中使用。这里是：
 
-Here is an important point, and we are making a large assumption here. The assumption is that we assume that the created process links to the supervisor process. What does this mean? This means that we assume that the process is spawned using
-`spawn\_link`. In fact, in the OTP Supervisor behavior assumes that processes are created using
-`spawn\_link`.
+列表 5.8 thy_supervisor.ex - 启动子进程
 
+```elixir
+defmodule ThySupervisor do
+  # …
 
-Starting child processes
+  #####################
+  # 私有函数 #
+  #####################
 
+  defp start_children([child_spec|rest]) do
+    case start_child(child_spec) do
+      {:ok, pid} ->
+        [{pid, child_spec}|start_children(rest)]
+      :error ->
+        :error
+    end
+  end
 
-Now, we can look at the
-`start_children/1`
-function, which is used in
-`init/1`. Here it is:
+  defp start_children([]), do: []
+end
+```
+`start_children/1` 函数接收子规范列表，并将子规范交给 `start_child/1`，同时累积一个元组列表。如前所述，每个元组都是一对，包含 `pid` 和子规范。
 
+`start_child/1` 是如何工作的？事实证明，没有太多复杂的机制涉及。每当我们看到一个 `pid`，我们会将其链接到监督进程：
 
-Listing 5.8  thy\_supervisor .ex – Starting children processes
+```elixir
+defp start_child({mod, fun, args}) do
+  case apply(mod, fun, args) do
+    pid when is_pid(pid) ->
+      Process.link(pid)
+      {:ok, pid}
+    _ ->
+      :error
+  end
+end
+```
+terminate_child（监督者，pid）
 
-`defmodule ThySupervisor do`
-`# …`
+监督器需要一种方法来终止其子进程。以下是API，回调和私有函数的实现：
 
-`#####################`
-`# Private Functions #`
-`#####################`
+清单 5.9    thy\_supervisor.ex – 终止单个子进程
 
-`defp start_children([child_spec|rest]) do`
-`case start_child(child_spec) do`
-`{:ok, pid} ->`
-`[{pid, child_spec}|start_children(rest)]`
-`:error ->`
-`:error`
-`end`
-`end`
+```elixir
+defmodule ThySupervisor do
+use GenServer
 
-`defp start_children([]), do: []``end`
-The
-`start_children/1`
-function takes a list of child specifications and hands
-`start_child/1`
-a child specification, all the while accumulating a list of tuples. As previously seen, each tuple is a pair that contains the
-`pid`
-and the child specification.
+#######
+# API #
+#######
 
+def terminate_child(supervisor, pid) when is_pid(pid) do
+GenServer.call(supervisor, {:terminate_child, pid})
+end
 
-How does
-`start_child/1`
-do its work? Turns out, there isn’t a lot of sophisticated machinery involved. Whenever we see a
-`pid`, we will link it to the supervisor process:
+######################
+# Callback Functions #
+######################
 
-`defp start_child({mod, fun, args}) do`
-`case apply(mod, fun, args) do`
-`pid when is_pid(pid) ->`
-`Process.link(pid)`
-`{:ok, pid}`
-`_ ->`
-`:error`
-`end``end`
-terminate\_child(supervisor, pid)
+def handle_call({:terminate_child, pid}, _from, state) do
+case terminate_child(pid) do
+:ok ->
+new_state = state |> HashDict.delete(pid)
+{:reply, :ok, new_state}
+:error ->
+{:reply, {:error, "error terminating child"}, state}
+end
+end
 
+#####################
+# Private Functions #
+#####################
 
-The supervisor needs a way to terminate its children. Here’s the API, callback and private function implementation:
+defp terminate_child(pid) do
+Process.exit(pid, :kill)
+:ok
+end
+end
+```
+我们使用 `Process.exit(pid, :kill)` 来终止子进程。还记得我们如何设置监督器来捕获退出吗？当一个子进程被强制杀死使用 `Process.exit(pid, :kill)`，监督器将收到一个形式为 `{:EXIT, pid, :killed}` 的消息。为了处理这个消息，使用 `handle_info/3` 回调：
 
+清单 5.10  thy\_supervisor.ex – :EXIT 消息通过 handle\_info/3 回调处理
 
-Listing 5.9    thy\_supervisor.ex – Terminating a single child process
-
-`defmodule ThySupervisor do`
-`use GenServer`
-
-`#######`
-`# API #`
-`#######`
-
-`def terminate_child(supervisor, pid) when is_pid(pid) do`
-`GenServer.call(supervisor, {:terminate_child, pid})`
-`end`
-
-`######################`
-`# Callback Functions #`
-`######################`
-
-`def handle_call({:terminate_child, pid}, _from, state) do`
-`case terminate_child(pid) do`
-`:ok ->`
-`new_state = state |> HashDict.delete(pid)`
-`{:reply, :ok, new_state}`
-`:error ->`
-`{:reply, {:error, “error terminating child”}, state}`
-`end`
-`end`
-
-`#####################`
-`# Private Functions #`
-`#####################`
-
-`defp terminate_child(pid) do`
-`Process.exit(pid, :kill)`
-`:ok`
-`end`
-`end`
-We use
-`Process.exit(pid, :kill)`
-to terminate the child process. Remember how we set the supervisor to trap exits? When a child is forcibly killed using
-`Process.exit(pid, :kill)`, the supervisor will receive a message in the form of
-`{:EXIT, pid, :killed}`. In order to handle this message, the
-`handle_info/3`
-callback is used:
-
-
-Listing 5.10  thy\_supervisor.ex – :EXIT messages are handled via the handle\_info/3 callback
-
-`def handle_info({:EXIT, from, :killed}, state) do`
-`new_state = state |> HashDict.delete(from)`
-`{:no_reply, new_state}``end`
-All we need to do is to update the supervisor state by remove its entry in the
-`HashDict`, and return the appropriate tuple in the callback.
-
+```elixir
+def handle_info({:EXIT, from, :killed}, state) do
+new_state = state |> HashDict.delete(from)
+{:no_reply, new_state}
+end
+```
+我们需要做的就是更新监督器状态，通过在 `HashDict` 中删除其条目，并在回调中返回适当的元组。
 
 restart\_child(pid, child\_spec)
 
+有时手动重启一个子进程是有帮助的。当我们想要重启一个子进程时，我们需要提供进程id和子规范。为什么我们需要将子规范与进程id一起传入？原因是你可能想要添加更多的参数，这必须进入子规范。
 
-Sometimes it is helpful to manually restart a child process. When we want to restart a child process, we need to supply the process id and the child specification. Why do we need the child specifications passed in along with the process id?  The reason is that you might want to add in more arguments, and that has to go into the child specification.
+`restart_child/2` 私有函数是 `terminate_child/1` 和 `start_child/1` 的组合。
 
+清单 5.11  thy\_supervisor.ex – 重启一个子进程
 
-The
-`restart_child/2`
-private function is a combination of
-`terminate_child/1`
-and
-`start_child/1`.
+```elixir
+defmodule ThySupervisor do
+use GenServer
 
+#######
+# API #
+#######
 
-Listing 5.11  thy\_supervisor.ex – Restarting a child process
+def restart_child(supervisor, pid, child_spec) when is_pid(pid) do
+GenServer.call(supervisor, {:restart_child, pid, child_spec})
+end
 
-`defmodule ThySupervisor do`
-`use GenServer`
+######################
+# Callback Functions #
+######################
 
-`#######`
-`# API #`
-`#######`
+def handle_call({:restart_child, old_pid}, _from, state) do
+case HashDict.fetch(state, old_pid) do
+{:ok, child_spec} ->
+case restart_child(old_pid, child_spec) do
+{:ok, {pid, child_spec}} ->
+new_state = state
+|> HashDict.delete(old_pid)
+|> HashDict.put(pid, child_spec)
+{:reply, {:ok, pid}, new_state}
+:error ->
+{:reply, {:error, "error restarting child"}, state}
+end
+_ ->
+{:reply, :ok, state}
+end
+end
 
-`def restart_child(supervisor, pid, child_spec) when is_pid(pid) do`
-`GenServer.call(supervisor, {:restart_child, pid, child_spec})`
-`end`
+#####################
+# Private Functions #
+#####################
 
-`######################`
-`# Callback Functions #`
-`######################`
-
-`def handle_call({:restart_child, old_pid}, _from, state) do`
-`case HashDict.fetch(state, old_pid) do`
-`{:ok, child_spec} ->`
-`case restart_child(old_pid, child_spec) do`
-`{:ok, {pid, child_spec}} ->`
-`new_state = state`
-`|> HashDict.delete(old_pid)`
-`|> HashDict.put(pid, child_spec)`
-`{:reply, {:ok, pid}, new_state}`
-`:error ->`
-`{:reply, {:error, “error restarting child”}, state}`
-`end`
-`_ ->`
-`{:reply, :ok, state}`
-`end`
-`end`
-
-`#####################`
-`# Private Functions #`
-`#####################`
-
-`defp restart_child(pid, child_spec) when is_pid(pid) do`
-`case terminate_child(pid) do`
-`:ok ->`
-`case start_child(child_spec) do`
-`{:ok, new_pid} ->`
-`{:ok, {new_pid, child_spec}}`
-`:error ->`
-`:error`
-`end`
-`:error ->`
-`:error`
-`end`
-`end`
-`end`
+defp restart_child(pid, child_spec) when is_pid(pid) do
+case terminate_child(pid) do
+:ok ->
+case start_child(child_spec) do
+{:ok, new_pid} ->
+{:ok, {new_pid, child_spec}}
+:error ->
+:error
+end
+:error ->
+:error
+end
+end
+end
+```
 count\_children(supervisor)
 
+这个函数返回与监督器链接的子进程的数量。实现很直接：
 
-This function returns the number of children that is linked to the supervisor. The implementation is straightforward:
+清单 5.12 thy\_supervisor.ex – 计算子进程的数量
 
+```elixir
+defmodule ThySupervisor do
+use GenServer
 
-Listing 5.12    thy\_supervisor.ex – Counting the number of child processes
+#######
+# API #
+#######
 
-`defmodule ThySupervisor do`
-`use GenServer`
+def count_children(supervisor) do
+GenServer.call(supervisor, :count_children)
+end
 
-`#######`
-`# API #`
-`#######`
+######################
+# Callback Functions #
+######################
 
-`def count_children(supervisor) do`
-`GenServer.call(supervisor, :count_children)`
-`end`
-
-`######################`
-`# Callback Functions #`
-`######################`
-
-`def handle_call(:count_children, _from, state) do`
-`{:reply, HashDict.size(state), state}`
-`end`
-`end`
+def handle_call(:count_children, _from, state) do
+{:reply, HashDict.size(state), state}
+end
+end
+```
 which\_children(supervisor)
 
+这与 `count_children/1` 的实现类似。因为我们的实现很简单，所以完全可以返回整个状态：
 
-This is similar to
-`count_children/1`’s implementation. Because our implementation is simple, it is fine to return the entire state:
+清单 5.13 thy\_supervisor.ex – which\_children/1 的简单实现，返回监督器的整个状态
 
+```elixir
+defmodule ThySupervisor do
+use GenServer
 
-Listing 5.13    thy\_supervisor.ex –  A simplistic implementation of which\_childre/1 that returns the entire state of the supervisor
+#######
+# API #
+#######
 
-`defmodule ThySupervisor do`
-`use GenServer`
+def which_children(supervisor) do
+GenServer.call(supervisor, :which_children)
+end
 
-`#######`
-`# API #`
-`#######`
+######################
+# Callback Functions #
+######################
 
-`def which_children(supervisor) do`
-`GenServer.call(supervisor, :which_children)`
-`end`
-
-`######################`
-`# Callback Functions #`
-`######################`
-
-`def handle_call(:which_children, _from, state) do`
-`{:reply, state, state}`
-`end`
-`end`
+def handle_call(:which_children, _from, state) do
+{:reply, state, state}
+end
+end
+```
 terminate(reason, state)
 
+这个回调被用来关闭监督器进程。在我们终止监督器进程之前，我们需要终止所有与其链接的子进程，这是由 `terminate_children/1` 私有函数处理的：
 
-This callback is called to shutdown the supervisor process. Before we terminate the supervisor process, we need to terminate all the children it is linked to, which is handled by the
-`terminate_children/1`
-private function:
+清单 5.14 thy\_supervisor.ex – 终止监督器涉及到首先终止子进程
 
+```elixir
+defmodule ThySupervisor do
+use GenServer
 
-Listing 5.14    thy\_supervisor.ex – Terminating the supervisor involves terminating the child processes first
+######################
+# Callback Functions #
+######################
 
-`defmodule ThySupervisor do`
-`use GenServer`
+def terminate(_reason, state) do
+terminate_children(state)
+:ok
+end
 
-`######################`
-`# Callback Functions #`
-`######################`
+#####################
+# Private Functions #
+#####################
 
-`def terminate(_reason, state) do`
-`terminate_children(state)`
-`:ok`
-`end`
+defp terminate_children([]) do
+:ok
+end
 
-`#####################`
-`# Private Functions #`
-`#####################`
+defp terminate_children(child_specs) do
+child_specs |> Enum.each(fn {pid, _} -> terminate_child(pid) end)
+end
 
-`defp terminate_children([]) do`
-`:ok`
-`end`
+defp terminate_child(pid) do
+Process.exit(pid, :kill)
+:ok
+end
+end
+```
 
-`defp terminate_children(child_specs) do`
-`child_specs |> Enum.each(fn {pid, _} -> terminate_child(pid) end)`
-`end`
+### 5.3.4 处理崩溃
 
-`defp terminate_child(pid) do`
-`Process.exit(pid, :kill)`
-`:ok`
-`end`
-`end`
-5.3.4        Handling Crashes
+我把最好的留到了最后。当其中一个子进程崩溃时会发生什么？如果你注意的话，监督器会收到一个看起来像 `{:EXIT, pid, reason}` 的消息。我们再次使用 `handle_info/3` 回调来处理退出消息。
 
+有两种情况需要考虑（除了 `:killed`，我们在 `terminate_child/1` 中处理了）。
 
-I’ve saved the best for last. What happens when one of the child processes crashes? If you were paying attention, the supervisor would receive a message that looks like
-`{:EXIT, pid, reason}`. Once again, we use the
-`handle_info/3`
-callback to handle the exit messages.
+第一种情况是进程正常退出。在这种情况下，监督器不需要做任何事情，只需更新其状态：
 
+清单 5.15 thy\_supervisor.ex – 当一个子进程正常退出时，不做任何操作
 
-There are two cases to consider (other than
-`:killed`, which we handled in
-`terminate_child/1`).
+```elixir
+def handle_info({:EXIT, from, :normal}, state) do
+new_state = state |> HashDict.delete(from)
+{:no_reply, new_state}
+end
+```
+第二种情况是进程异常退出并且没有被强制杀死。在这种情况下，监督器应该自动重启失败的进程：
 
+清单 5.16 thy\_supervisor.ex – 如果一个子进程因为异常原因退出，自动重启它
 
-The first case is when the process exited normally. The supervisor doesn’t have to do anything in this case, except update its state:
+```elixir
+def handle_info({:EXIT, old_pid, _reason}, state) do
+case HashDict.fetch(state, old_pid) do
+{:ok, child_spec} ->
+case restart_child(old_pid, child_spec) do
+{:ok, {pid, child_spec}} ->
+new_state = state
+|> HashDict.delete(old_pid)
+|> HashDict.put(pid, child_spec)
+{:no_reply, new_state}
+:error ->
+{:no_reply, state}
+end
+_ ->
+{:no_reply, state}
+end
+end
+```
+以上的函数并不新鲜。它几乎与 `restart_child/2` 的实现相同，只是子规范是*重用*的。
 
+### 5.3.5 完整的源代码
 
-Listing 5.15    thy\_supervisor.ex – Do nothing when a child process exits normally
+以下是我们手动实现的监督器的完整源代码：
 
-`def handle_info({:EXIT, from, :normal}, state) do`
-`new_state = state |> HashDict.delete(from)`
-`{:no_reply, new_state}``end`
-The second case is when the process has exited abnormally and hasn’t been forcibly killed. In that case, the supervisor should automatically restart the failed process:
+清单 5.17 thy\_supervisor.ex 的完整实现
 
+```elixir
+defmodule ThySupervisor do
+use GenServer
 
-Listing 5.16    thy\_supervisor.ex – Restart a child process automatically if it exits for an abnormal reason
+#######
+# API #
+#######
 
-`def handle_info({:EXIT, old_pid, _reason}, state) do`
-`case HashDict.fetch(state, old_pid) do`
-`{:ok, child_spec} ->`
-`case restart_child(old_pid, child_spec) do`
-`{:ok, {pid, child_spec}} ->`
-`new_state = state`
-`|> HashDict.delete(old_pid)`
-`|> HashDict.put(pid, child_spec)`
-`{:no_reply, new_state}`
-`:error ->`
-`{:no_reply, state}`
-`end`
-`_ ->`
-`{:no_reply, state}`
-`end``end`
-This above function is nothing new. It is almost the same implementation as
-`restart_child/2`, except that the child specification is *reused*.
+def start_link(child_spec_list) do
+GenServer.start_link(__MODULE__, [child_spec_list])
+end
 
+def start_child(supervisor, child_spec) do
+GenServer.call(supervisor, {:start_child, child_spec})
+end
 
-5.3.5        Full Completed Source
+def terminate_child(supervisor, pid) when is_pid(pid) do
+GenServer.call(supervisor, {:terminate_child, pid})
+end
 
+def restart_child(supervisor, pid, child_spec) when is_pid(pid) do
+GenServer.call(supervisor, {:restart_child, pid, child_spec})
+end
 
-Here is the full source of our hand-rolled supervisor in all its glory:
+def count_children(supervisor) do
+GenServer.call(supervisor, :count_children)
+end
 
+def which_children(supervisor) do
+GenServer.call(supervisor, :which_children)
+end
 
-Listing 5.17    The full implementation of thy\_supervisor.ex
+######################
+# Callback Functions #
+######################
 
-`defmodule ThySupervisor do`
-`use GenServer`
+def init([child_spec_list]) do
+Process.flag(:trap_exit, true)
+state = child_spec_list
+|> start_children
+|> Enum.into(HashDict.new)
 
-`#######`
-`# API #`
-`#######`
+{:ok, state}
+end
 
-`def start_link(child_spec_list) do`
-`GenServer.start_link(__MODULE__, [child_spec_list])`
-`end`
+def handle_call({:start_child, child_spec}, _from, state) do
+case start_child(child_spec) do
+{:ok, pid} ->
+new_state = state |> HashDict.put(pid, child_spec)
+{:reply, {:ok, pid}, new_state}
+:error ->
+{:reply, {:error, "error starting child"}, state}
+end
+end
 
-`def start_child(supervisor, child_spec) do`
-`GenServer.call(supervisor, {:start_child, child_spec})`
-`end`
+def handle_call({:terminate_child, pid}, _from, state) do
+case terminate_child(pid) do
+:ok ->
+new_state = state |> HashDict.delete(pid)
+{:reply, :ok, new_state}
+:error ->
+{:reply, {:error, "error terminating child"}, state}
+end
+end
 
-`def terminate_child(supervisor, pid) when is_pid(pid) do`
-`GenServer.call(supervisor, {:terminate_child, pid})`
-`end`
+def handle_call({:restart_child, old_pid}, _from, state) do
+case HashDict.fetch(state, old_pid) do
+{:ok, child_spec} ->
+case restart_child(old_pid, child_spec) do
+{:ok, {pid, child_spec}} ->
+new_state = state
+|> HashDict.delete(old_pid)
+|> HashDict.put(pid, child_spec)
+{:reply, {:ok, pid}, new_state}
+:error ->
+{:reply, {:error, "error restarting child"}, state}
+end
+_ ->
+{:reply, :ok, state}
+end
+end
 
-`def restart_child(supervisor, pid, child_spec) when is_pid(pid) do`
-`GenServer.call(supervisor, {:restart_child, pid, child_spec})`
-`end`
+def handle_call(:count_children, _from, state) do
+{:reply, HashDict.size(state), state}
+end
 
-`def count_children(supervisor) do`
-`GenServer.call(supervisor, :count_children)`
-`end`
+def handle_call(:which_children, _from, state) do
+{:reply, state, state}
+end
 
-`def which_children(supervisor) do`
-`GenServer.call(supervisor, :which_children)`
-`end`
+def handle_info({:EXIT, from, :normal}, state) do
+new_state = state |> HashDict.delete(from)
+{:no_reply, new_state}
+end
 
-`######################`
-`# Callback Functions #`
-`######################`
+def handle_info({:EXIT, from, :killed}, state) do
+new_state = state |> HashDict.delete(from)
+{:no_reply, new_state}
+end
 
-`def init([child_spec_list]) do`
-`Process.flag(:trap_exit, true)`
-`state = child_spec_list`
-`|> start_children`
-`|> Enum.into(HashDict.new)`
+def handle_info({:EXIT, old_pid, _reason}, state) do
+case HashDict.fetch(state, old_pid) do
+{:ok, child_spec} ->
+case restart_child(old_pid, child_spec) do
+{:ok, {pid, child_spec}} ->
+new_state = state
+|> HashDict.delete(old_pid)
+|> HashDict.put(pid, child_spec)
+{:no_reply, new_state}
+:error ->
+{:no_reply, state}
+end
+_ ->
+{:no_reply, state}
+end
+end
 
-`{:ok, state}`
-`end`
+def terminate(_reason, state) do
+terminate_children(state)
+:ok
+end
 
-`def handle_call({:start_child, child_spec}, _from, state) do`
-`case start_child(child_spec) do`
-`{:ok, pid} ->`
-`new_state = state |> HashDict.put(pid, child_spec)`
-`{:reply, {:ok, pid}, new_state}`
-`:error ->`
-`{:reply, {:error, “error starting child”}, state}`
-`end`
-`end`
+#####################
+# Private Functions #
+#####################
 
-`def handle_call({:terminate_child, pid}, _from, state) do`
-`case terminate_child(pid) do`
-`:ok ->`
-`new_state = state |> HashDict.delete(pid)`
-`{:reply, :ok, new_state}`
-`:error ->`
-`{:reply, {:error, “error terminating child”}, state}`
-`end`
-`end`
+defp start_children([child_spec|rest]) do
+case start_child(child_spec) do
+{:ok, pid} ->
+[{pid, child_spec}|start_children(rest)]
+:error ->
+:error
+end
+end
 
-`def handle_call({:restart_child, old_pid}, _from, state) do`
-`case HashDict.fetch(state, old_pid) do`
-`{:ok, child_spec} ->`
-`case restart_child(old_pid, child_spec) do`
-`{:ok, {pid, child_spec}} ->`
-`new_state = state`
-`|> HashDict.delete(old_pid)`
-`|> HashDict.put(pid, child_spec)`
-`{:reply, {:ok, pid}, new_state}`
-`:error ->`
-`{:reply, {:error, “error restarting child”}, state}`
-`end`
-`_ ->`
-`{:reply, :ok, state}`
-`end`
-`end`
+defp start_children([]), do: []
 
-`def handle_call(:count_children, _from, state) do`
-`{:reply, HashDict.size(state), state}`
-`end`
+defp start_child({mod, fun, args}) do
+case apply(mod, fun, args) do
+pid when is_pid(pid) ->
+Process.link(pid)
+{:ok, pid}
+_ ->
+:error
+end
+end
 
-`def handle_call(:which_children, _from, state) do`
-`{:reply, state, state}`
-`end`
+defp terminate_children([]) do
+:ok
+end
 
-`def handle_info({:EXIT, from, :normal}, state) do`
-`new_state = state |> HashDict.delete(from)`
-`{:no_reply, new_state}`
-`end`
+defp terminate_children(child_specs) do
+child_specs |> Enum.each(fn {pid, _} -> terminate_child(pid) end)
+end
 
-`def handle_info({:EXIT, from, :killed}, state) do`
-`new_state = state |> HashDict.delete(from)`
-`{:no_reply, new_state}`
-`end`
+defp terminate_child(pid) do
+Process.exit(pid, :kill)
+:ok
+end
 
-`def handle_info({:EXIT, old_pid, _reason}, state) do`
-`case HashDict.fetch(state, old_pid) do`
-`{:ok, child_spec} ->`
-`case restart_child(old_pid, child_spec) do`
-`{:ok, {pid, child_spec}} ->`
-`new_state = state`
-`|> HashDict.delete(old_pid)`
-`|> HashDict.put(pid, child_spec)`
-`{:no_reply, new_state}`
-`:error ->`
-`{:no_reply, state}`
-`end`
-`_ ->`
-`{:no_reply, state}`
-`end`
-`end`
+defp restart_child(pid, child_spec) when is_pid(pid) do
+case terminate_child(pid) do
+:ok ->
+case start_child(child_spec) do
+{:ok, new_pid} ->
+{:ok, {new_pid, child_spec}}
+:error ->
+:error
+end
+:error ->
+:error
+end
+end
+end
+```
 
-`def terminate(_reason, state) do`
-`terminate_children(state)`
-`:ok`
-`end`
+## 5.4 一个样例运行（或者：它真的能工作吗？）
 
-`#####################`
-`# Private Functions #`
-`#####################`
+在我们开始测试我们的监督器之前，创建一个新文件 `lib/thy_worker.ex`：
 
-`defp start_children([child_spec|rest]) do`
-`case start_child(child_spec) do`
-`{:ok, pid} ->`
-`[{pid, child_spec}|start_children(rest)]`
-`:error ->`
-`:error`
-`end`
-`end`
+清单 5.18 lib/thy\_worker.ex – 一个用于 ThySupervisor 的示例 worker
 
-`defp start_children([]), do: []`
+```elixir
+defmodule ThyWorker do
+def start_link do
+spawn(fn -> loop end)
+end
 
-`defp start_child({mod, fun, args}) do`
-`case apply(mod, fun, args) do`
-`pid when is_pid(pid) ->`
-`Process.link(pid)`
-`{:ok, pid}`
-`_ ->`
-`:error`
-`end`
-`end`
+def loop do
+receive do
+:stop -> :ok
 
-`defp terminate_children([]) do`
-`:ok`
-`end`
-
-`defp terminate_children(child_specs) do`
-`child_specs |> Enum.each(fn {pid, _} -> terminate_child(pid) end)`
-`end`
-
-`defp terminate_child(pid) do`
-`Process.exit(pid, :kill)`
-`:ok`
-`end`
-
-`defp restart_child(pid, child_spec) when is_pid(pid) do`
-`case terminate_child(pid) do`
-`:ok ->`
-`case start_child(child_spec) do`
-`{:ok, new_pid} ->`
-`{:ok, {new_pid, child_spec}}`
-`:error ->`
-`:error`
-`end`
-`:error ->`
-`:error`
-`end`
-`end``end`
-5.4           A Sample Run (Or: Does It Really Work?)
-
-
-Before we put our supervisor through its paces, create a new file
-`lib/thy_worker.ex`:
-
-
-Listing 5.18    lib/thy\_worker.ex – An example worker to be used with ThySupervisor
-
-`defmodule ThyWorker do`
-`def start_link do`
-`spawn(fn -> loop end)`
-`end`
-
-`def loop do`
-`receive do`
-`:stop -> :ok`
-
-`msg ->`
-`IO.inspect msg`
-`loop`
-`end`
-`end``end`
-We begin by creating a worker:
+msg ->
+IO.inspect msg
+loop
+end
+end
+end
+```
+我们首先创建一个 worker：
 
 `iex> {:ok, sup_pid} = ThySupervisor.start_link([])`
 `{:ok, #PID<0.86.0>}`
-Let’s create a process and add it to the supervisor. We save the pid of the newly spawned child process.
+让我们创建一个进程并将其添加到监督器中。我们保存新生成的子进程的 pid。
 
 `iex> {:ok, child_pid} = ThySupervisor.start_child(sup_pid, {ThyWorker, :start_link, []})`
-Let’s see what links are present in the supervisor:
+让我们看看监督器中存在哪些链接：
 
 `iex(3)> Process.info(sup_pid, :links)`
 `{:links, [#PID<0.82.0>, #PID<0.86.0>]}`
-Interesting – there are two processes linked to the supervisor process. The first one is obviously the child process we just spawned. What about the other one?
+有趣的是，有两个进程链接到了监督器进程。第一个显然是我们刚刚生成的子进程。那么另一个是什么呢？
 
 `iex> self`
 `#PID<0.82.0>`
-A little thought should reveal that since the supervisor process is spawned and linked by the shell process, it would have the shell’s pid in its link set.
+经过一些思考，我们应该能发现，由于监督器进程是由 shell 进程生成并链接的，所以它的链接集中会有 shell 的 pid。
 
-
-Let’s kill the child process:
+让我们杀死子进程：
 
 `iex> Process.exit(child_pid, :crash)`
-What happens when we inspect the link set of the supervisor again?
+当我们再次检查监督器的链接集时会发生什么？
 
 `iex> Process.info(sup_pid, :links)`
 `{:links, [#PID<0.82.0>, #PID<0.90.0>]}`
-Sweet! The supervisor automatically took care of spawning and linking the new child process. To convince ourselves, we can peek at the supervisors state:
+太棒了！监督器自动负责生成和链接新的子进程。为了说服我们自己，我们可以查看监督器的状态：
 
 `iex> ThySupervisor.which_children(sup_pid)`
 `#HashDict<[{#PID<0.90.0>, {ThyWorker, :start_link, []}}]>`
-5.5           Summary
 
+5.5 总结
 
-In this chapter, we worked through several examples that highlight how:
+在本章中，我们通过几个例子强调了以下几点：
 
+- "让它崩溃"的哲学意味着将错误检测和处理委托给另一个进程，而不是过度防御性编程
+- 链接建立了进程之间的双向关系，当其中一个进程发生崩溃时，它们会传播退出信号
+- 监视器在进程之间建立了单向关系，所以当被监视的进程死亡时，监视进程只会收到通知
+- 退出信号可以被所谓的系统进程捕获，这些进程将退出信号转换为普通消息
+- 使用进程和链接实现一个简单的监督器进程
 
-·      The “Let it Crash” philosophy means delegating error detection and handling to another process and not coding too defensively
-
-
-·      Links set up bi-directional relationships between processes that serve to propagate exit signals when a crash happens in one of the processes
-
-
-·      Monitors set up a unidirectional relationship between processes so that the monitoring process is simply notified when a monitored process dies
-
-
-·      Exit signals can be trapped by so-called system processes that convert exit signals into normal messages
-
-
-·      Implement a simplistic supervisor process using processes and links
-
-
-In the next chapter, we are ready to dive into the OTP Supervisor behavior. We will learn about the most important Supervisor features, and get to experiment with them by building a worker pooler. Fun times!
-
-
-
-
-
+在下一章中，我们准备深入研究 OTP Supervisor 行为。我们将学习最重要的 Supervisor 特性，并通过构建一个 worker pooler 来实验它们。有趣的时刻即将到来！

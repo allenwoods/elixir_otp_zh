@@ -1,26 +1,7 @@
-xml version='1.0' encoding='utf-8'?
+# 第三部分 类型规范和测试
 
+"让它崩溃"的原则并不意味着你可以编写未经测试的代码。在本书的最后一部分，我们将研究使我们的 Elixir 代码更可靠的技术和工具。
 
+我们将研究 Dialyzer，并学习如何用类型规范来捕获我们代码中的错误。然后我们将进入基于属性的测试，学习如何断言我们函数的属性，并学习编写为我们生成测试的代码。
 
-Unknown
-
-
-
-
-
-
-# Part 3 Type Specifications and Testing
-
-
-Having "Let it crash" as a mantra doesn't give you the license to write untested code. In the final part of this book, we'll examine the techniques and tools that make our Elixir code more reliable.
-
-
-We'll look at Dialyzer and learn how to lace our code with type specifications to catch bugs in our code. We then go into property-based testing, where we learn how assert properties of our functions and learn to write code that generates tests for us.
-
-
-While writing concurrent code in Elixir is definitely easier, errors will definitely crop up. In the final chapter, we'll look at Concuerror, a tool to hunt down concurrency bugs.
-
-
-
-
-
+虽然在 Elixir 中编写并发代码肯定更容易，但错误肯定会出现。在最后一章中，我们将研究 Concuerror，这是一个用来寻找并发错误的工具。

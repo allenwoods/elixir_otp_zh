@@ -1,29 +1,9 @@
-xml version='1.0' encoding='utf-8'?
+# 第2部分：容错、监督与分布式处理
 
+我们现在进入了大多数语言和平台难以处理的领域，即容错和分布式处理。我们将学习Erlang虚拟机（Erlang VM）提供的基本工具，用于检测进程何时崩溃。
 
+接着，我们将学习第二种OTP行为——监督器（Supervisor），以及如何管理进程的层级结构，并在进程崩溃时自动采取行动。我们专门用两章来构建一个功能完备的工作池应用程序，该程序利用了常规服务器（GenServers）和监督器。
 
-Unknown
+我们通过负载平衡和容错的视角来研究分布式处理，这将在接下来的两章中进行探讨。
 
-
-
-
-
-
-# Part 2 Fault Tolerance, Supervision and Distribution
-
-
-We've come to the part where most languages and platforms struggle to do well, namely fault tolerance and distribution. We will learn about the primitives that the Erlang VM provides to detect when processes crash.
-
-
-Then we will learn about the second OTP behaviour, the Supervisor, and how to manage hierarchies of processes, and automatically take action when a process crashes. We dedicate two chapters to build a full-featured worker pool application that makes use of GenServers and Supervisors.
-
-
-We examine distribution through the lens of load balancing and fault-tolerance in the next two chapters that follow.
-
-
-By the end of these two chapters, you would have built a distributed load tester, a distributed and fault-tolerant Chuck Norris jokes service. More importantly, you would have a firm grasp of how to use OTP effectively.
-
-
-
-
-
+在这两章的学习结束时，你将构建出一个分布式的负载测试器，一个分布式且具备容错能力的Chuck Norris笑话服务。更重要的是，你将对如何有效使用OTP有一个坚实的掌握。

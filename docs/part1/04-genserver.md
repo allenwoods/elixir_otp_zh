@@ -80,7 +80,7 @@ iex(1)> :observer.start
 
 当窗口弹出时，点击“Applications”选项卡。你应该会看到类似这样的内容：
 
-![](../../images/4_2.png)  
+![](../images//4_2.png)  
 
 清单 4. 2 Observer工具显示Kernel应用的监督器树
 

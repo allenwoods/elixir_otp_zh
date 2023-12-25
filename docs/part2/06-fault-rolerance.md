@@ -1,131 +1,75 @@
-# 6      Fault Tolerance with Supervisors
+# 6      使用监督器实现容错
 
+本章内容包括：
 
-This chapter covers:
+·      如何使用 OTP Supervisor 行为
 
+·      学习如何使用 ETS，Erlang Term Storage
 
-·      How to use the OTP Supervisor behavior
+·      如何将监督器与普通进程和其他 OTP 行为一起使用
 
+·      实现一个非常基础的 worker pool 应用
 
-·      Learn how to use ETS, Erlang Term Storage
+在上一章中，我们使用语言提供的基本元素，即监视器、链接和进程，构建了一个简单的监督器。这应该让你对监督器的内部工作有了很好的理解。
 
+在上一章中我们对你进行了一些挑逗，现在我们终于要使用真正的东西：*OTP Supervisor 行为*（以下简称为 Supervisor）。监督器的唯一责任是观察和检查一个附加的子进程是否崩溃，并在发生这种情况时采取一些行动。
 
-·      How to use supervisors with normal processes and other OTP behaviors
+OTP 版本提供了比我们之前的实现更多的功能。例如，*重启策略*，它规定了如果出现问题，监督器应该如何重启子进程。它还提供了在特定时间范围内限制重启次数的选项。这对于防止无限重启特别有用。
 
+要*真正*理解监督器，重要的是要亲自尝试一下。因此，我们将构建这个应用程序（由*Observer*应用程序提供的全部荣耀展示）：
 
-·      Implementing a very basic worker pool application
+![](../images//6_1.png)  
 
+图 6.1 完成的 worker pool 应用程序
 
-In the previous chapter, we built a naïve supervisor made from primitives provided by the language, namely, monitors, links and processes. That should give you a good understanding of how supervisors work under the hood.
+图 6.1 显示了完成的 worker pool 应用程序。#1 是顶级的 `Supervisor`。它监督 #2，另一个 `Supervisor`（`PoolsSupervisor`），和一个 `GenServer`（`Pooly.Server`），#3。`PoolsSupervisor` 又监督了其他三个 `PoolSupervisor`。其中一个被标记为 #4。这些监督器都有唯一的名称。每个 `PoolSupervisor` 又监督了一个 worker supervisor #5（由其进程 id 表示）和一个 GenServer #6。最后，#7 是实际的工作人员，他们在做繁重的工作。如果你想知道 `GenServer` 是用来做什么的，它们主要是用来为“同一级别”的监督器维护状态。例如，位于 #6 的 `GenServer` 帮助监督器 #5 维护状态。
 
+6.1 实现 Pooly – 一个 Worker Pool 应用
 
-After teasing you in the previous chapter, we are finally going to use the real thing: The *OTP Supervisor behavior* (henceforth simply referred to as Supervisor). The sole responsibility of a supervisor is to observe and check if an attached child process goes down and take some action if it happens.
+我们将在两章的过程中构建一个 worker pool。你说什么是 worker pool？它是管理一池（惊喜！）工作人员的东西。你可能需要这个是为了管理对稀缺资源的访问。它可以是任何东西，从 Redis 连接池、web socket 连接池，甚至是 GenServer 工作人员池。
 
+例如，如果你生成了一百万个进程，每个进程都需要连接到数据库。打开一百万个数据库连接是不切实际的。为了解决这个问题，创建了一个数据库连接池。每次进程需要数据库连接时，它会向池发出请求。一旦进程完成了数据库连接，它就会返回到池中。实际上，资源分配被委托给了 worker pool 应用。
 
-The OTP version offers a few more bells and whistles from our previous implementation. Take *restart strategies* for example, which dictates how a supervisor should restart the children if something goes wrong. It also offers options too for limiting the number of restarts within a specific timeframe. This is especially useful for preventing infinite restarts.
+我们将要构建的 worker pool 应用*一点都不*简单。事实上，如果你熟悉 Poolboy，那么很多设计都是为了这个例子而改编的。如果你没有听说过或者没有使用过 Poolboy，也没关系，它不是先决条件。
 
+我相信这是一个非常有益的练习，因为它让你思考那些在简单的例子中不会出现的概念和问题。你也将亲手使用 Supervisor API。
 
-To *really* understand supervisors, it is important to try them out for yourself. Therefore, instead of boring you with every single supervisor option, we are going to build this application (presented in its full glory courtesy of the *Observer* application:
+因此，这个例子可能比迄今为止的例子稍微有些挑战性。一些代码/设计可能不是很明显，但主要是因为你没有事后诸葛亮的好处。但是不用担心，亲爱的读者，因为你将在每一步都得到指导。我只要求你通过在电脑上输入代码来完成这个代码，然后在下一章的结束时期待启示。
 
+6.1.1 计划
 
-![](../../images/6_1.png)  
+我们将通过四个版本来演进 Pooly 的设计。本章将介绍 Supervisor 的基础知识，并帮助你构建一个非常基础的版本（版本 1）的 Pooly。下一章将完全专注于构建 Pooly 的各种功能。
 
+表 6.1 列出了 Pooly 的每个版本的特性：
 
-
-Figure 6.1 The completed worker pool application
-
-
-Figure 6.1 shows the completed worker pool application. #1 is the top-level
-`Supervisor`. It supervises #2, another
-`Supervisor`
-(`PoolsSupervisor`), and a
-`GenServer`
-(`Pooly.Server`), #3.
-`PoolsSupervisor`
-in turn supervises three other
-`PoolSupervisor`s. One of them is marked as #4. These supervisors have unique names. Each
-`PoolSupervisor`
-in turn supervises a worker supervisor #5 (represented by its process id) and a GenServer #6. Finally, #7 are the actual workers doing the grunt work. If you are wondering what the
-`GenServer`’s are for, they are primarily needed to maintain state for the supervisor “at the same level”. For example, the
-`GenServer`
-at #6 helps maintain the state for the supervisor at #5.
-
-
-6.1           Implementing Pooly – a Worker Pool Application
-
-
-We are going to build a worker pool over the course of two chapters. What is a worker pool, you say? It is something that manages a pool (surprise!) of workers. The reason you want this might be to manage access to a scarce resource. It could be anything from a pool of Redis connections, web socket connections and even a pool of GenServer workers.
-
-
-For example, if you spawn one million processes, and each process needs a connection to the database. It is impractical to open one million database connections. To get around this, a pool of database connections is created. Each time a process needs a database connection it will issue a request to the pool. Once the process is done with the database connection, it is returned back to the pool. In effect, resource allocation is delegated to the worker pool application.
-
-
-The worker pool application that we are will build is *not* trivial at all. In fact, if you are familiar with Poolboy, a lot of the design has been adapted for this example. No worries if you have not heard or used Poolboy, it is not a prerequisite.
-
-
-I believe this is a very rewarding exercise, because it gets you thinking about concepts and issues that would otherwise not come up in simpler examples. You will get hands on with the Supervisor API too.
-
-
-As such, this example may be slightly more challenging than the previous examples so far. Some of the code/design might not be obvious, but mostly because you didn’t have the benefit of hindsight. But fret not, dear reader, for you will be guided every step of the way. All I ask is work through the code by typing it on your computer, and await enlightenment by the end of the next chapter!
-
-
-6.1.1        The Plan
-
-
-We will evolve the design of Pooly through four versions. This chapter covers the fundamentals of Supervisor, and get you building a very basic version (version 1) of Pooly. The following chapter would be completely focused on building the various features of Pooly.
-
-
-Table 6.1 lists the characteristics of each version of Pooly:
-
-
-
-
-|  |  |
+| 版本 | 特性 |
 | --- | --- |
-| 
-Version
- | 
-Characteristics
- |
-| 1 | Supports a *single* pool
-Supports a *fixed* number of workers
-No recovery when consumer and/or worker process fail |
-| 2 | Same as version 1
-Recovery when consumer and/or worker process fail |
-| 3 | Supports *multiple* pools
-Supports a *variable* number of workers |
-| 4 | Same as version 3
-Variable sized pool that allows for overflowing of workers
-Queuing for consumer processes when all workers are busy |
+| 1 | 支持*单个*池
+||支持*固定*数量的 worker
+||当消费者和/或 worker 进程失败时，不进行恢复
+| 2 | 与版本 1 相同
+||当消费者和/或 worker 进程失败时，进行恢复 
+| 3 | 支持*多个*池
+||支持*可变*数量的 worker
+| 4 | 与版本 3 相同
+||允许 worker 溢出的可变大小的池
+||当所有 worker 都忙时，为消费者进程排队 
 
+表 6.1 Pooly 将在四个版本中经历的不同变化
 
-Table 6. 1 The different changes that Pooly will undergo across four versions
+为了了解设计将如何演变，版本 1 和版本 2 的样子如下：
 
+![](../images//6_2.png)  
 
-To have an idea of how the design will evolve, version 1 and 2 looks like:
+图 6.2 Pooly 的版本 1 和版本 2
 
+矩形代表 `Supervisor`，椭圆代表 `GenServer`，圆圈代表 worker 进程。在版本 3 和版本 4 中，设计将如下所示演变：
 
-![](../../images/6_2.png)  
+![](../images//6_3.png)
 
+图 6.3 Pooly 的版本 3 和版本 4
 
-
-Figure 6.2 Version 1 and 2 of Pooly
-
-
-Rectangles represent
-`Supervisor`s, ovals represent
-`GenServer`s and circles represent the worker processes. In version 3 and version 4, the design will evolve like so:
-
-
-![](../../images/6_3.png)  
-
-
-
-Figure 6.3 Version 3 and 4 of Pooly
-
-
-From the diagram, it should be obvious why it’s called a supervision *tree*.
-
+从图中，应该很明显为什么它被称为监督*树*。
 
 6.1.2        A Sample Run of Pooly
 
@@ -218,7 +162,7 @@ However, since we are learning, we shall opt for the flag-less version.
 The very first version of Pooly will only support a single pool of fixed workers. Furthermore, there will be no recovery handling when either the consumer or worker process fails. By the end of this version, Pooly will look like:
 
 
-![](../../images/6_4.png)  
+![](../images//6_4.png)  
 
 
 
@@ -265,7 +209,7 @@ specified in the pool configuration.
 The following diagram illustrates how Pooly version 1 works:
 
 
-![](../../images/6_2a.png)  
+![](../images//6_2a.png)  
 
 
 
@@ -645,7 +589,7 @@ Now, we will work on the brains of the operation. In general, you want to leave 
 Therefore, we introduce a GenServer process that will handle most of the interesting logic of the application. The server process must communicate with both the top-level supervisor and the worker supervisor. One way would be to use *named processes*:
 
 
-![](../../images/6_3a.png)  
+![](../images//6_3a.png)  
 
 
 
@@ -658,7 +602,7 @@ In this case, both processes can refer to each other by their respective names. 
 Where will the server get the references to both supervisors? When the top-level supervisor starts the server, the supervisor can pass its own pid to the server. In fact, this is exactly what we will do when we come to the implementation of the top-level supervisor.
 
 
-![](../../images/6_3b.png)  
+![](../images//6_3b.png)  
 
 
 
@@ -1445,7 +1389,7 @@ Next, fire up Observer:
 Select the *Applications* tab and you will see something similar to this:
 
 
-![](../../images/6_4a.png)  
+![](../images//6_4a.png)  
 
 
 
@@ -1455,7 +1399,7 @@ Figure 6.4 Version 1 of Pooly as seen from Observer
 Let’s start by killing a worker. (I hope you are not reading this book aloud). You can do this by right-click on a worker process and selecting *Kill process*:
 
 
-![](../../images/6_5.png)  
+![](../images//6_5.png)  
 
 
 
@@ -1468,7 +1412,7 @@ You would realize that the supervisor spawned a new worker in the killed process
 More importantly, the crash/exit of a single worker didn’t affect the rest of the supervision tree. In other words, the crash of that single worker was isolated only to *that* worker, and didn’t affect anything else.
 
 
-![](../../images/6_6.png)  
+![](../images//6_6.png)  
 
 
 
@@ -1481,7 +1425,7 @@ Now, what happens if we kill
 and select *Kill process* like so:
 
 
-![](../../images/6_7.png)  
+![](../images//6_7.png)  
 
 
 
@@ -1491,7 +1435,7 @@ Figure 6. 7 Killing the Server process from Observer
 This time, *all* the processes were killed and the top-level restarted *all* its child processes:
 
 
-![](../../images/6_8.png)  
+![](../images//6_8.png)  
 
 
 
