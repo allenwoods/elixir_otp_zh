@@ -4,5 +4,9 @@
 			"path": "."
 		}
 	],
-	"settings": {}
+	"settings": {
+		"files.autoSave": "onFocusChange",
+		"editor.fontSize": 14,
+		"vim.disableExtension": true
+	},
 }

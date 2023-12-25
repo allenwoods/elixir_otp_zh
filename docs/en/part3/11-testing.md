@@ -248,7 +248,7 @@ Inverse Functions
 This is one of the easiest to exploit. Some functions also have an inverse counterpart.
 
 
-![](../Images/11_1.png)  
+![](../../images/11_1.png)  
 
 
 
@@ -336,7 +336,7 @@ This is a slight variation of the previous technique. Let’s say you want to te
 There is another way! Instead of using a map, why not use something simpler like a list? Yes, it might not be the most efficient data structure in the world, but it is simple, and easy to create implementations of the map operations.
 
 
-![](../Images/11_2.png)  
+![](../../images/11_2.png)  
 
 
 
@@ -644,7 +644,7 @@ and it’s *inverse*,
 `f-1(x)`, then we can say that:
 
 
-![](../Images/11_F1.png)  
+![](../../images/11_F1.png)  
 
 
 
@@ -1566,7 +1566,7 @@ is the second process spawned by the parent process. Now, let’s tell Concuerro
 looks like:
 
 
-![](../Images/11_3.png)  
+![](../../images/11_3.png)  
 
 
 
@@ -1987,7 +1987,7 @@ Concuerror has helpfully discovered a race condition! In fact, it has even point
 Here’s the graphic version:
 
 
-![](../Images/11_4.png)  
+![](../../images/11_4.png)  
 
 
 

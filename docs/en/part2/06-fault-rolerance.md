@@ -1,13 +1,3 @@
-xml version='1.0' encoding='utf-8'?
-
-
-
-Style A ReadMe
-
-
-
-
-
 # 6      Fault Tolerance with Supervisors
 
 
@@ -38,7 +28,7 @@ The OTP version offers a few more bells and whistles from our previous implement
 To *really* understand supervisors, it is important to try them out for yourself. Therefore, instead of boring you with every single supervisor option, we are going to build this application (presented in its full glory courtesy of the *Observer* application:
 
 
-![](../Images/6_1.png)  
+![](../../images/6_1.png)  
 
 
 
@@ -115,7 +105,7 @@ Table 6. 1 The different changes that Pooly will undergo across four versions
 To have an idea of how the design will evolve, version 1 and 2 looks like:
 
 
-![](../Images/6_2.png)  
+![](../../images/6_2.png)  
 
 
 
@@ -127,7 +117,7 @@ Rectangles represent
 `GenServer`s and circles represent the worker processes. In version 3 and version 4, the design will evolve like so:
 
 
-![](../Images/6_3.png)  
+![](../../images/6_3.png)  
 
 
 
@@ -228,7 +218,7 @@ However, since we are learning, we shall opt for the flag-less version.
 The very first version of Pooly will only support a single pool of fixed workers. Furthermore, there will be no recovery handling when either the consumer or worker process fails. By the end of this version, Pooly will look like:
 
 
-![](../Images/6_4.png)  
+![](../../images/6_4.png)  
 
 
 
@@ -275,7 +265,7 @@ specified in the pool configuration.
 The following diagram illustrates how Pooly version 1 works:
 
 
-![](../Images/6_2a.png)  
+![](../../images/6_2a.png)  
 
 
 
@@ -655,7 +645,7 @@ Now, we will work on the brains of the operation. In general, you want to leave 
 Therefore, we introduce a GenServer process that will handle most of the interesting logic of the application. The server process must communicate with both the top-level supervisor and the worker supervisor. One way would be to use *named processes*:
 
 
-![](../Images/6_3a.png)  
+![](../../images/6_3a.png)  
 
 
 
@@ -668,7 +658,7 @@ In this case, both processes can refer to each other by their respective names. 
 Where will the server get the references to both supervisors? When the top-level supervisor starts the server, the supervisor can pass its own pid to the server. In fact, this is exactly what we will do when we come to the implementation of the top-level supervisor.
 
 
-![](../Images/6_3b.png)  
+![](../../images/6_3b.png)  
 
 
 
@@ -1455,7 +1445,7 @@ Next, fire up Observer:
 Select the *Applications* tab and you will see something similar to this:
 
 
-![](../Images/6_4a.png)  
+![](../../images/6_4a.png)  
 
 
 
@@ -1465,7 +1455,7 @@ Figure 6.4 Version 1 of Pooly as seen from Observer
 Let’s start by killing a worker. (I hope you are not reading this book aloud). You can do this by right-click on a worker process and selecting *Kill process*:
 
 
-![](../Images/6_5.png)  
+![](../../images/6_5.png)  
 
 
 
@@ -1478,7 +1468,7 @@ You would realize that the supervisor spawned a new worker in the killed process
 More importantly, the crash/exit of a single worker didn’t affect the rest of the supervision tree. In other words, the crash of that single worker was isolated only to *that* worker, and didn’t affect anything else.
 
 
-![](../Images/6_6.png)  
+![](../../images/6_6.png)  
 
 
 
@@ -1491,7 +1481,7 @@ Now, what happens if we kill
 and select *Kill process* like so:
 
 
-![](../Images/6_7.png)  
+![](../../images/6_7.png)  
 
 
 
@@ -1501,7 +1491,7 @@ Figure 6. 7 Killing the Server process from Observer
 This time, *all* the processes were killed and the top-level restarted *all* its child processes:
 
 
-![](../Images/6_8.png)  
+![](../../images/6_8.png)  
 
 
 

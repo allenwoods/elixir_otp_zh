@@ -1,13 +1,3 @@
-xml version='1.0' encoding='utf-8'?
-
-
-
-Style A ReadMe
-
-
-
-
-
 # 7   Completing the Worker Pool Application
 
 
@@ -150,7 +140,7 @@ table. Finally, a new worker is created and added back into the workers field of
 After version 2, we have a very basic worker pool in place. However, any self-respecting worker pool application should be able to handle multiple pools. Let’s go through a few possible designs before we start coding. The most straight forward way would be to design the supervision tree like so:
 
 
-![](../Images/7_1.png)  
+![](../../images/7_1.png)  
 
 
 
@@ -169,7 +159,7 @@ Allow me to elaborate. Issues with any of the
 (*just* another level of indirection!). Here’s how it could like now:
 
 
-![](../Images/7_2.png)  
+![](../../images/7_2.png)  
 
 
 
@@ -183,7 +173,7 @@ process has to handle *every* request that is meant for any pool. This means tha
 also presents a single point of failure, since it contains the state of every pool. The death of the server process means that *all* of the worker supervisors would have to be brought down. Consider this design then:
 
 
-![](../Images/7_3.png)  
+![](../../images/7_3.png)  
 
 
 
@@ -278,7 +268,7 @@ and
 `Pooly.WorkerSupervisor.`
 
 
-![](../Images/7_4.png)  
+![](../../images/7_4.png)  
 
 
 
@@ -387,7 +377,7 @@ is going to have some of its job taken over by the dedicated
 `Pooly.PoolServer`.
 
 
-![](../Images/7_6.png)  
+![](../../images/7_6.png)  
 
 
 
@@ -495,7 +485,7 @@ is starts with a given
 7.1.8        Adding the Pool Supervisor
 
 
-![](../Images/7_7.png)  
+![](../../images/7_7.png)  
 
 
 
@@ -711,7 +701,7 @@ to reference the appropriate pool server to call the appropriate functions.
 The last piece is the worker supervisor. It is tasked with managing the individual workers. It manages any crashing workers. There is a subtle detail. During initialization, the worker supervisor creates a *link* its corresponding pool server. Why bother? If either the pool server or worker supervisor goes down, there is no point in one or the other to continue to exist.
 
 
-![](../Images/7_8.png)  
+![](../../images/7_8.png)  
 
 
 
@@ -810,7 +800,7 @@ and start Observer:
 Bear witness to the glorious supervision tree you have created:
 
 
-![](../Images/7_9.png)  
+![](../../images/7_9.png)  
 
 
 

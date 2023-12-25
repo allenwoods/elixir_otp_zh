@@ -1,14 +1,3 @@
-xml version='1.0' encoding='utf-8'?
-
-
-
-Style A ReadMe
-
-
-
-
-
-
 # 5   Concurrent Error Handling and Fault Tolerance with Links, Monitors, and Processes
 
 
@@ -48,7 +37,7 @@ In this section, we will first learn about *links*, *monitors*, *trapping* *exit
 When a process links to another, it creates a bi-directional relationship. A linked process has a *link set*, which contains a set of all the processes it is linked to. If either process terminates for whatever reason, an *exit signal* is propagated to all the processes it is linked to. Furthermore, if any of these processes is linked to a different set of processes, then the *same* exit signal is propagated along too.
 
 
-![](../Images/5_1.png)  
+![](../../images/5_1.png)  
 
 
 
@@ -294,7 +283,7 @@ This gives us:
 `“#PID<0.85.0>: {:links, [#PID<0.84.0>, #PID<0.86.0>]}”,`
 `“#PID<0.86.0>: {:links, [#PID<0.85.0>, #PID<0.87.0>]}”,`
 `“#PID<0.87.0>: {:links, [#PID<0.86.0>, #PID<0.88.0>]}”,``“#PID<0.88.0>: {:links, [#PID<0.87.0>, #PID<0.84.0>]}”]`
-![](../Images/5_2.png)  
+![](../../images/5_2.png)  
 
 
 
@@ -493,7 +482,7 @@ This time, notice that the shell process restarts and the process id is no longe
 Consider the ring again. Only two processes are trapping exits. This is what we want to create:
 
 
-![](../Images/5_3.png)  
+![](../../images/5_3.png)  
 
 
 
@@ -674,7 +663,7 @@ message, except that it is not an error but a plain old message lying in the mai
 A supervisor is a process whose only job is to monitor one or more processes. These processes can be worker processes or even other supervisors.
 
 
-![](../Images/5_4.png)  
+![](../../images/5_4.png)  
 
 
 

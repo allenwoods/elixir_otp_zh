@@ -85,7 +85,7 @@ for short, is a REPL (read-eval-print-loop) that is similar to Ruby's
 `irb`. It comes with some pretty nifty features, such as syntax highlighting and a beautiful documentation system, as shown in Figure 1.1.
 
 
-![](../Images/1_1.png)  
+![](../../images/1_1.png)  
 Figure 1.1 Interactive Elixir has documentation built-in
 
 
@@ -146,7 +146,7 @@ so it’s worth it to keep up with the changelog!  
 Testing aficionados will be pleased to know that there is a test framework built in called ExUnit. ExUnit has some very nice features such as being able to run *asynchronously* and also producing beautiful failure messages, as show in figure 1.2. ExUnit is able to perform nifty tricks with error reporting mainly due to *macros*, which we will not cover in this book. Nonetheless, it is a fascinating topic to explore.
 
 
-![](../Images/1_2.png)  
+![](../../images/1_2.png)  
 
 Figure 1.2 ExUnit comes with excellent error messages
 

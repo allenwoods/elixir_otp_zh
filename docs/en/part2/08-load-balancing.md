@@ -1,14 +1,3 @@
-xml version='1.0' encoding='utf-8'?
-
-
-
-Style A ReadMe
-
-
-
-
-
-
 # 8   Distribution and Load Balancing
 
 
@@ -69,7 +58,7 @@ Here, we are creating 100 workers that will make a HTTP GET request to
 and measure the response time and count the number of successful requests. Behind the scenes, Blitzy creates a cluster and splits the workers across the nodes in the cluster. In the above example, 100 workers are split across four nodes. Therefore, there are 25 workers running on each node:
 
 
-![](../Images/8_1.png)  
+![](../../images/8_1.png)  
 
 
 
@@ -79,7 +68,7 @@ Figure 8.1 The number of requests is split across the available nodes in the clu
 Once all the workers from each individual node have completed, the result will then be sent over the master node.
 
 
-![](../Images/8_2.png)  
+![](../../images/8_2.png)  
 
 
 
@@ -549,7 +538,7 @@ We will revisit Blitzy in a little bit. Let's learn to build a cluster in Elixir
 Processes in an Elixir/Erlang cluster are location transparent. This means that it just as easy to send a message between processes on a single node as it is on a different node, as long as you know the process id of the recipient process.
 
 
-![](../Images/8_3.png)  
+![](../../images/8_3.png)  
 
 
 
@@ -690,7 +679,7 @@ is connected to
 `maurice`.
 
 
-![](../Images/8_4.png)  
+![](../../images/8_4.png)  
 
 
 
@@ -1131,7 +1120,7 @@ are temporary (they are not restarted when crashed). In order to use the
 `lib/supervisor.ex`:
 
 
-![](../Images/8_5.png)  
+![](../../images/8_5.png)  
 
 
 
@@ -1232,7 +1221,7 @@ structs. Instead, what we want is
 `Enum.flat_map/2`, which looks like this, which takes a arbitrarily nested list, flattens the list then applies a function to each of the elements on the flattened list. The following diagram illustrates:
 
 
-![](../Images/8_7.png)  
+![](../../images/8_7.png)  
 
 
 
@@ -1306,7 +1295,7 @@ You will see all four terminals populated with messages like:
 Here's an example on my machine:
 
 
-![](../Images/8_7a.png)  
+![](../../images/8_7a.png)  
 
 
 

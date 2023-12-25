@@ -160,7 +160,7 @@ Listing 4. 1 Launching the Observer tool
 When the window pops up, click on the “Applications” tab. You should see something like this:
 
 
-![](../Images/4_2.png)  
+![](../../images/4_2.png)  
 
 
 

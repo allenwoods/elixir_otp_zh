@@ -1,14 +1,3 @@
-xml version='1.0' encoding='utf-8'?
-
-
-
-Style A ReadMe
-
-
-
-
-
-
 # 9   Distribution and Fault Tolerance
 
 
@@ -218,7 +207,7 @@ If you look up the Erlang documentation on the data types that
 expects, you will see this:
 
 
-![](../Images/9_0.png)  
+![](../../images/9_0.png)  
 
 
 
@@ -284,7 +273,7 @@ are initialized, the cluster will then be usable.
 All three nodes have Chucky *compiled* (this is an important detail). However, when the cluster starts, only *one* application is started, and it is started on the master node (surprise!). This means that while the requests can be made from any node in the cluster, only the master node serves back that request:
 
 
-![](../Images/9_1.png)  
+![](../../images/9_1.png)  
 
 
 
@@ -299,14 +288,14 @@ has failed. It will then spin up the application on one of the slave nodes. In t
 `b`:
 
 
-![](../Images/9_2.png)  
+![](../../images/9_2.png)  
 
 
 
 Figure 9.2 Assuming a@host fails. Within 5 seconds, a failover node will take over (See next figure)
 
 
-![](../Images/9_3.png)  
+![](../../images/9_3.png)  
 
 
 
@@ -327,7 +316,7 @@ restarts? Since
 is the master node, it has the *highest priority* amongst the rest of the nodes. Therefore, it will initiate a *takeover*:
 
 
-![](../Images/9_4.png)  
+![](../../images/9_4.png)  
 
 
 
