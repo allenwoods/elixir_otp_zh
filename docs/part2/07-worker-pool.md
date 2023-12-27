@@ -1,1591 +1,1005 @@
-# 7   Completing the Worker Pool Application
+# 第 7 章 完成工作池应用程序
 
+本章内容包括：
 
-This chapter covers:
+· 实现完整的工作池应用程序
 
+· 构建多个监督层级
 
-·      Implement the entire worker pool application
+· 动态创建监督者和工作者
 
+在本章中，我们将继续发展在第 6 章开始的 `Pooly` 的设计。到本章结束时，我们将拥有一个完整且功能齐全的工作池应用程序。我们将更深入地探索 Supervisor API，并探讨更高级（也就是更有趣！）的监督者主题。
 
-·      Build multiple supervision hierarchies
+在第 6 章中，我们停留在一个非常基础的工作池应用程序阶段，如果可以这样说的话。在接下来的部分中，我们将为 `Pooly` 添加一些智能。例如，目前还没有办法优雅地处理崩溃和重启。`Pooly` 的当前版本只能处理单个池和固定数量的工作者。第 3 版本的 `Pooly` 将实现对多个池的支持，以及对可变数量的工作进程的支持。
 
+有时池需要处理意外负载。当请求太多时会发生什么？当所有工作者都忙时会发生什么？在第 4 版中，我们使池具有可变大小，允许工作者的 *溢出*。我们还实现了在所有工作者都忙时对消费者进程的排队。
 
-·      Dynamically creating supervisors and workers
+## 7.1 版本 3：错误处理、多个池和工作者
 
+我们如何知道一个进程崩溃了？我们可以监视或链接它。这引出了下一个问题，我们应该选择哪一个？为了回答这个问题，我们必须思考当进程崩溃时应该发生什么。有两种情况需要考虑。崩溃可能发生在：
 
-In this chapter, we will continue to evolve the design of
-`Pooly`, which we started in Chapter 6. By the end of this chapter, we would have a full, working worker pool application. We will get to explore other the Supervisor API more thoroughly, and also explore more advanced (read: fun!) supervisor topics.
+· 服务器进程和消费者进程之间
 
+· 服务器进程和工作者进程之间
 
-In chapter 6, we were left with a very rudimentary worker pool application, if we can even call it that. In the following sections, will add some smarts into
-`Pooly`. For example, there is currently no way of handling crashes and restarts gracefully. The current version of
-`Pooly`
-can only handle a single pool with a fixed number of workers. Version 3 of
-`Pooly`
-will implement support for multiple pools and support for variable number of worker processes.
+### 7.1.1 情况 1：服务器和工作者之间的崩溃
 
+服务器进程的崩溃不应该影响消费者进程。事实上，反之亦然！当消费者进程崩溃时，它不应该使服务器进程崩溃。因此，*监视器* 是正确的选择。
 
-Sometimes the pool must deal with unexpected load. What happens when there are too many requests? What happens when all the workers are busy? In version 4, we make pools be variable-sized that allows for the *overflowing* of workers. We also implement queuing for consumer processes when all workers are busy.
+每次工作者检出时，我们已经在监视消费者进程。剩下的就是处理消费者进程的 `:DOWN` 消息：
 
+```elixir
+defmodule Pooly.Server do
 
-7.1           Version 3: Error Handling, Multiple Pools and Workers
+#############
+# Callbacks #
+#############
 
+def handle_info({:DOWN, ref, _, _, _}, state = %{monitors: monitors, workers: workers}) do
+  case :ets.match(monitors, {:”$1”, ref}) do
+    [[pid]] ->
+      true = :ets.delete(monitors, pid)
+      new_state = %{state | workers: [pid|workers]} #1
+      {:no_reply, new_state}
 
-How can we tell if a process crashes? We can either monitor or link to it. This leads to the next question, which should we choose? To answer that question, we must think about what should happen when processes crash. There are two cases to consider. There can be crashes between:
+    [[]] ->
+      {:no_reply, state}
+  end
+end
+end
+#1 将工作者返回到池中
+```
 
+当消费者进程崩溃时，我们在 `monitors` ETS 表中匹配引用，删除监视器，并将工作者添加回状态中。
 
-·      Server process and Consumer process
+### 7.1.2 情况 2：服务器和工作者之间的崩溃
 
+如果服务器崩溃，它应该带下工作者进程吗？应该，因为否则，服务器的状态将与池的实际状态不一致。另一方面，当工作者进程崩溃时，它应该使服务器进程崩溃吗？当然不是！这对我们意味着什么？嗯，由于双向依赖，我们应该使用 *链接*。然而，由于服务器在工作者进
 
-·      Server process and Worker process
+程崩溃时 *不应* 崩溃，服务器进程应该捕获退出：
 
+```elixir
+defmodule Pooly.Server do
 
-7.1.1        Case 1: Crashes between the Server and Worker
+#############
+# Callbacks #
+#############
+def init([sup, pool_config]) when is_pid(sup) do
+  Process.flag(:trap_exit, true)                          #1
+  monitors = :ets.new(:monitors, [:private])
+  init(pool_config, %State{sup: sup, monitors: monitors})
+end
+end
+#1 设置服务器进程以捕获退出。
+```
 
+现在服务器进程已经开始捕获退出，我们应该处理来自工作者的 `:EXIT` 消息：
 
-A crash of the server process shouldn’t affect a consumer process. In fact, the reverse is also true! When a consumer process crashes, it shouldn’t crash the server process. Therefore, *monitors* are the way to go.
+```elixir
+defmodule Pooly.Server do
 
+#############
+# Callbacks #
+#############
 
-We are already monitoring the consumer process each time a checkout of a worker is made. What’s left is to handle the
-`:DOWN`
-message of a consumer process:
+def handle_info({:EXIT, pid, _reason}, state = %{monitors: monitors, workers: workers, worker_sup: worker_sup}) do
+  case :ets.lookup(monitors, pid) do
+    [{pid, ref}] ->
+      true = Process.demonitor(ref)
+      true = :ets.delete(monitors, pid)
+      new_state = %{state | workers: [new_worker(worker_sup)|workers]}
+      {:noreply, new_state}
 
+    [[]] ->
+      {:noreply, state}
+  end
+end
+end
+```
 
-Listing 7.1 lib/pooly/server.ex – Handling :DOWN message from a consumer
+当工作者进程意外退出时，在 `monitors` ETS 表中查找其条目。如果条目不存在，则无需执行任何操作。否则，不再监视消费者进程，并从 `monitors` 表中删除其条目。最后，创建一个新的工作者并将其添加回服务器状态的工作者字段中。
 
-`defmodule Pooly.Server do`
+### 7.1.3 处理多个池
 
-`#############`
-`# Callbacks #`
-`#############`
+在第 2 版之后，我们有了一个非常基本的工作池。然而，任何自尊的工作池应用程序都应该能够处理多个池。在我们开始编码之前，让我们先考虑一些可能的设计。最直接的方法是这样设计监督树：
 
-`def handle_info({:DOWN, ref, _, _, _}, state = %{monitors: monitors, workers: workers}) do`
-`case :ets.match(monitors, {:”$1”, ref}) do`
-`[[pid]] ->`
-`true = :ets.delete(monitors, pid)`
-`new_state = %{state | workers: [pid|workers]} #1`
-`{:no_reply, new_state}`
+![](../images//7_1.png)
 
-`[[]] ->`
-`{:no_reply, state}`
-`end`
-`end`
-`end`
-#1 Return the worker back to the pool
+图 7.1 处理多个池的可能设计
 
+你看到问题了吗？我们实际上是在 `Pooly.Supervisor` 中添加更多的 `WorkerSupervisor`。这是一个糟糕的设计。问题在于 *错误核心*，或者说缺乏错误核心。
 
-When a consumer process goes down, we match the reference in the
-`monitors`
-ETS table, delete the monitor, and add back the worker into the state.
+请允许我详细说明。任何 `WorkerSupervisor` 的问题都不应该影响 `Pooly.Server`。思考当一个进程崩溃时会发生什么，以及谁会受到影响是值得的。一个潜在的修复方法可能是添加另一个监督者来处理所有工作者监督者，比如 `Pooly.WorkersSupervisor`（*只是* 另一个间接层！）。现在它可能是这样的：
 
+![](../images//7_2.png)
 
-7.1.2        Case 2: Crashes between the Server and Worker
+图 7.2 另一种可能的设计。你能识别出瓶颈吗？
 
+你注意到另一个问题了吗？可怜的 `Pooly.Server` 必须处理 *每个* 池的所有请求。这意味着如果消息快速而猛烈地发送到服务器进程，可能会导致服务器进程成为瓶颈，并可能淹没其邮箱。`Pooly.Server` 也是单点故障，因为它包含每个池的状态。服务器进程的死亡意味着 *所有* 工作者监督者都必须被关闭。那么考虑一下这个设计：
 
-If the server crashes, should it bring down the worker process? It should, because otherwise, the state of the server will be inconsistent with the pool’s actual state. On the other hand, when a worker process crashes, should it bring down the server process? Of course not! What does this mean for us? Well, because of the bi-directional dependency, we should be using *links*. However, since the server should *not* crash when a worker process crashes, the server process should trap exits:
+![](../images//7_3.png)
 
+图 7.3 Pooly 的最终设计
 
-Listing 7.2 lib/pooly/server.ex – Make the server process trap exits to prevent worker processes from crashing itself
+#### 顶层监督器
 
-`defmodule Pooly.Server do`
+`Pooly.Supervisor` 作为顶层监督器，管理一个 `Pooly.Server` 和一个 `PoolsSupervisor`。`PoolsSupervisor` 又管理多个 `PoolSupervisor`。每个 `PoolSupervisor` 管理自己的 `PoolServer` 和 `WorkerSupervisor`。
 
-`#############`
-`# Callbacks #`
-`#############`
-`def init([sup, pool_config]) when is_pid(sup) do`
-`Process.flag(:trap_exit, true)                          #1`
-`monitors = :ets.new(:monitors, [:private])`
-`init(pool_config, %State{sup: sup, monitors: monitors})`
-`end`
-`end`
-#1 Set the server process to trap exits.
+如你所猜测的，Pooly将进行设计大修。为了便于跟踪，我们将从上到下实施更改。
 
+#### 7.1.4 添加应用行为到 Pooly
 
-With the server process now trapping exits, we should now handle
-`:EXIT`
-messages coming from workers:
+首先要更改的地方是 `lib/pooly.ex`，Pooly的主入口。由于我们现在支持多个池(pool)，我们希望通过其名称引用每个池。这意味着各种函数也将接受 `pool_name` 作为参数：
 
+##### 清单 7.4 lib/pooly.ex - 添加对多个池的支持
 
-Listing 7.3 lib/pooly/server.ex – Handling :EXIT messages from workers in the pool server
+```elixir
+defmodule Pooly do
+  use Application
 
-`defmodule Pooly.Server do`
+  def start(_type, _args) do
+    pools_config =                                      #2
+    [                                                   #1
+      [name: "Pool1",                                   #1
+       mfa: {SampleWorker, :start_link, []}, size: 2],  #1
+      [name: "Pool2",                                   #1
+       mfa: {SampleWorker, :start_link, []}, size: 3],  #1
+      [name: "Pool3",                                   #1
+       mfa: {SampleWorker, :start_link, []}, size: 4],  #1
+    ]                                                   #1
 
-`#############`
-`# Callbacks #`
-`#############`
+    start_pools(pools_config)                           #2
+  end
 
-`def handle_info({:EXIT, pid, _reason}, state = %{monitors: monitors, workers: workers, worker_sup: worker_sup}) do`
-`case :ets.lookup(monitors, pid) do`
-`[{pid, ref}] ->`
-`true = Process.demonitor(ref)`
-`true = :ets.delete(monitors, pid)`
-`new_state = %{state | workers: [new_worker(worker_sup)|workers]}`
-`{:noreply, new_state}`
+  def start_pools(pools_config) do                      #2
+    Pooly.Supervisor.start_link(pools_config)           #2
+  end
 
-`[[]] ->`
-`{:noreply, state}`
-`end`
-`end`
-`end`
-When a worker process exits unexpectedly, its entry is looked up in the
-`monitors`
-ETS table. If an entry doesn’t exist, nothing needs to be done. Otherwise, the consumer process is no longer monitored, and its entry is removed from the
-`monitors`
-table. Finally, a new worker is created and added back into the workers field of the server state.
+  def checkout(pool_name) do                            #3
+    Pooly.Server.checkout(pool_name)                    #3
+  end
 
+  def checkin(pool_name, worker_pid) do                 #3
+    Pooly.Server.checkin(pool_name, worker_pid)         #3
+  end
 
-7.1.3        Handling Multiple Pools
+  def status(pool_name) do                              #3
+    Pooly.Server.status(pool_name)                      #3
+  end
+end
+```
 
+#1 池配置现在接受多个池的配置。池也有名称。
 
-After version 2, we have a very basic worker pool in place. However, any self-respecting worker pool application should be able to handle multiple pools. Let’s go through a few possible designs before we start coding. The most straight forward way would be to design the supervision tree like so:
+#2 从 pool_config 到 pools_config 的复数变化。
 
+#3 其余的 API 接受 pool_name 作为参数。
 
-![](../images//7_1.png)  
+#### 7.1.5 添加顶层监督器
 
+我们的下一站是顶层监督器，`lib/pooly/supervisor.ex`。顶层监督器负责启动 `Pooly.Server` 和 `Pooly.PoolsSupervisor`。当 `Pooly.PoolsSupervisor` 启动时，它启动各自的 `Pooly.PoolSupervisor`，而这些又启动它们自己的 `Pooly.Server` 和 `Pooly.WorkerSupervisor`。
 
+![图 7.4 从顶层监督器开始](../images/7_4.png)
 
-Figure 7. 1 A possible design to handle multiple pools
+图 7.4 从顶层监督器开始
 
+看图，`Pooly.Supervisor` 监督两个进程：`Pooly.PoolsSupervisor`（尚未实现）和 `Pooly.Server`。因此，我们需要将这两个进程添加到 `Pooly.Supervisor` 的子进程列表中。我们就这样做：
 
-Do you see a problem with this? We are essentially sticking more
-`WorkerSupervisor`’s into
-`Pooly.Supervisor`. This is a bad design. The issue here is the *error kernel*, or the lack thereof.
+##### 清单 7.5 lib/pooly/supervisor.ex – 顶层监督器监督顶层池服务器和池监督器
 
+```elixir
+defmodule Pooly.Supervisor do
+  use Supervisor
 
-Allow me to elaborate. Issues with any of the
-`WorkerSupervisor`s shouldn’t affect the
-`Pooly.Server`. It pays to think about what happens when a process crashes and who gets affected. A potential fix could be to add another supervisor to handle all the worker supervisors, say a
-`Pooly.WorkersSupervisor`
-(*just* another level of indirection!). Here’s how it could like now:
+  def start_link(pools_config) do                       #1
+    Supervisor.start_link(__MODULE__, pools_config,
+                          name: __MODULE__)             #2
+  end
 
+  def init(pools_config) do                             #1
+    children = [
+      supervisor(Pooly.PoolsSupervisor, []),            #3
+      worker(Pooly.Server, [pools_config])              #3
+    ]
 
-![](../images//7_2.png)  
+    opts = [strategy: :one_for_all]
 
+    supervise(children
 
+, opts)
+  end
+end
+```
 
-Figure 7. 2 Another possible design. Can you identify the bottleneck?
+#1 从 pool_config 到 pools_config 的复数变化。
 
+#2 Pooly.Supervisor 现在是一个命名进程。
 
-Do you notice another problem? The poor
-`Pooly.Server`
-process has to handle *every* request that is meant for any pool. This means that the server process might pose a bottleneck if messages to it come fast and furious, and could potentially flood its mailbox.
-`Pooly.Server`
-also presents a single point of failure, since it contains the state of every pool. The death of the server process means that *all* of the worker supervisors would have to be brought down. Consider this design then:
+#3 Pooly.Supervisor 现在监督两个子进程。注意 Pooly.Server 不再需要 Pooly.Supervisor 的 pid，因为我们可以通过名称引用它。
 
+`Pooly.Supervisor` 的主要变化是添加 `Pooly.PoolsSupervisor` 作为子进程，并给 `Pooly.Supervisor` 命名。回想一下，我们在 #1 中将 `Pooly.Supervisor` 的名称设置为 `__MODULE__`，这意味着我们可以将进程引用为 `Pooly.Supervisor` 而不是 pid。因此，我们不需要将 `self`（参见 `Pooly.Supervisor` 的第二版）传递给 `Pooly.Server`。
 
-![](../images//7_3.png)  
+#### 7.1.6 添加池的监督器
 
+在 `lib/pooly/` 下创建 `pools_supervisor.ex`。以下是实现：
 
+##### 清单 7.6 lib/pooly/pools_supervisor.ex – 池监督器的完整实现
 
-Figure 7. 3 The final design of Pooly
+```elixir
+defmodule Pooly.PoolsSupervisor do
+  use Supervisor
 
+  def start_link do
+    Supervisor.start_link(__MODULE__, [], name: __MODULE__) #1
+  end
 
-The top-level supervisor
-`Pooly.Supervisor`
-supervises a
-`Pooly.Server`
-and a
-`PoolsSupervisor`. The
-`PoolsSupevisor`
-in turn supervises many
-`PoolSupervisor`s. Each
-`PoolSupervisor`
-supervises its own
-`PoolServer`
-and
-`WorkerSupervisor`.
+  def init(_) do
+    opts = [
+      strategy: :one_for_one                                #2
+    ]
 
+    supervise([], opts)
+  end
+end
+```
 
-As you probably have guessed, Pooly is going to undergo a design overhaul. To make things easier to follow, we will implement the changes from top down.
+就像 `Pooly.Supervisor`，我们给 `Pooly.PoolsSupervisor` 命名。注意这个监督器没有子规格。事实上，当它启动时，没有任何池附加到它。这是因为，就像版本 2 一样，我们想在创建任何池之前验证池配置。因此，我们提供的唯一信息是重启策略，如 #2 所示。为什么是 `:one_for_one`？任何池的崩溃都不应该影响其他池。
 
+7.1.7 使 Pooly.Server 更简单
 
-7.1.4        Adding the Application Behavior to Pooly
+在第一版和第二版中，我们说 `Pooly.Server` 是整个操作的大脑。但现在不再是这样了。`Pooly.Server` 的一些工作将由专门的 `Pooly.PoolServer` 接管。
 
+![图 7.6 从之前版本的顶级池服务器中移动的逻辑将被移至各个池服务器](../images//7_6.png)
 
-The first place to change is
-`lib/pooly.ex`, the main entry point of Pooly. Since we are now supporting multiple pools, we want to refer to each pool by its name. This means that the various functions will also accept
-`pool_name`
-as a parameter:
+图 7.6 从之前版本的顶级池服务器中移动的逻辑将被移至各个池服务器
 
+大多数 API 与之前版本相同，增加了 `pool_name`。打开 `lib/pooly/server.ex` 并*替换*之前的实现为以下内容：
 
-Listing 7.4 lib/pooly.ex – Adding support for multiple pools
+清单 7.7 lib/pooly/server.ex - 顶级池服务器的完整实现
 
-`defmodule Pooly do`
-`use Application`
+```elixir
+defmodule Pooly.Server do
+use GenServer
+import Supervisor.Spec
 
-`def start(_type, _args) do`
-`pools_config =                                            #2`
-`[                                                       #1`
-`[name: “Pool1”,                                       #1`
-`mfa: {SampleWorker, :start_link, []}, size: 2],     #1`
-`[name: “Pool2”,                                       #1`
-`mfa: {SampleWorker, :start_link, []}, size: 3],     #1`
-`[name: “Pool3”,                                       #1`
-`mfa: {SampleWorker, :start_link, []}, size: 4],     #1`
-`]                                                       #1`
+####### 
+# API #
+#######
 
-`start_pools(pools_config)                                 #2`
-`end`
+def start_link(pools_config) do
+GenServer.start_link(__MODULE__, pools_config, name: __MODULE__)
+end
 
-`def start_pools(pools_config) do                            #2`
-`Pooly.Supervisor.start_link(pools_config)                 #2`
-`end`
+def checkout(pool_name) do
+GenServer.call(:”#{pool_name}Server”, :checkout) #2
+end
 
-`def checkout(pool_name) do                                  #3`
-`Pooly.Server.checkout(pool_name)                          #3`
-`end`
+def checkin(pool_name, worker_pid) do
+GenServer.cast(:”#{pool_name}Server”, {:checkin, worker_pid})             #2
+end
 
-`def checkin(pool_name, worker_pid) do                       #3`
-`Pooly.Server.checkin(pool_name, worker_pid)               #3`
-`end`
+def status(pool_name) do
+GenServer.call(:”#{pool_name}Server”, :status)   #2
+end
 
-`def status(pool_name) do                                    #3`
-`Pooly.Server.status(pool_name)                            #3`
-`end`
-`end`
-#1 Pool configuration now takes in configuration of multiple pools. Pools also have names.
+#############
+# Callbacks #
+#############
 
+def init(pools_config) do                         #3
+pools_config |> Enum.each(fn(pool_config) ->    #3
+send(self, {:start_pool, pool_config})        #3
+end)                                          #3
 
-#2 Pluralization change from pool\_config to pools\_config.
+{:ok, pools_config}
+end
 
+def handle_info({:start_pool, pool_config}, state) do #4
+{:ok, _pool_sup} = Supervisor.start_child(Pooly.PoolsSupervisor, supervisor_spec(pool_config))                           #4
+{:no_reply, state}
+end
 
-#3 The rest of the APIs take in pool\_name as a parameter.
+#####################
+# Private Functions #
+#####################
 
+defp supervisor_spec(pool_config) do
+opts = [id: :”#{pool_config[:name]}Supervisor”]    #5
+supervisor(Pooly.PoolSupervisor, [pool_config], opts)
+end
+end
+```
 
-7.1.5        Adding the Top-level Supervisor
+在这个版本中，`Pooly.Server` 的工作是*委托*所有请求给相应的池，并启动池并将池附加到 `Pooly.PoolsSupervisor`。
 
+在 #2 中，我们假设每个单独的池服务器被命名为 `:”#{pool_name}Server”`。注意名字是*原子*！遗憾的是，因为我未能正确阅读文档，我在这上面浪费了几个小时（和头发）。
 
-Our next stop is the top-level supervisor,
-`lib/pooly/supervisor.ex`.  The top-level supervisor is in charged of kick-starting
-`Pooly.Server`
-and
-`Pooly.PoolsSupervisor`. When
-`Pooly.PoolsSupervisor`
-starts, it starts up individual
-`Pooly.PoolSupervisor`s that in turn starts its own
-`Pooly.Server`
-and
-`Pooly.WorkerSupervisor.`
+在 #3 中，`pools_config` 被迭代，发送 `{:start_pool, pool_config}` 消息给自己。在 #4 中处理消息，告诉 `Pooly.PoolsSupervisor` 根据给定的 `pool_config` 启动一个子进程。
 
+这里有一个*微小*的注意点。注意在 #5 中我们确保每个 `Pooly.PoolSupervisor` 以*独特*的监督器规范 id 启动。如果忘记这样做，你会得到一个如下的神秘错误信息：
 
-![](../images//7_4.png)  
+```
+12:08:16.336 [error] GenServer Pooly.Server terminating
+Last message: {:start_pool, [name: “Pool2”, mfa: {SampleWorker, :start_link, []}, size: 2]}
+State: [[name: “Pool1”, mfa: {SampleWorker, :start_link, []}, size: 2], [name: “Pool2”, mfa: {SampleWorker, :start_link, []}, size: 2]]
+** (exit) an exception was raised:
+** (MatchError) no match of right hand side value: {:error, {:already_started, #PID<0.142.0>}}
+(pooly) lib/pooly/server.ex:38: Pooly.Server.handle_info/2
+(stdlib) gen_server.erl:593: :gen_server.try_dispatch/4
+(stdlib) gen_server.erl:659: :gen_server.handle_msg/5
+(stdlib
 
+) proc_lib.erl:237: :proc_lib.init_p_do_apply/3
+```
 
+这里的线索是 `{:error, {:already_started, #PID<0.142.0>}}`。我花了几个小时试图解决这个问题，直到偶然发现这个解决方案。当一个 `Pooly.PoolSupervisor` 以给定的 `pool_config` 启动时会发生什么？
 
-Figure 7. 4 Starting from the top-level supervisor
+7.1.8 添加池监督器
 
+![图 7.7 实现各个池监督器](../images//7_7.png)
 
-Looking at the diagram
-`Pooly.Supervisor`
-supervises two processes:
-`Pooly.PoolsSupervisor`
-(as yet unimplemented) and
-`Pooly.Server`. We therefore need to add these two processes to the
-`Pooly.Supervisor`’s children list. Let’s do just that:
+图 7.7 实现各个池监督器
 
+`Pooly.PoolSupervisor` 取代了之前版本的 `Pooly.Supervisor`。因此，只有一些小的更改。首先，每个 `Pooly.PoolSupervisor` 现在都初始化了一个名字。其次，我们需要告诉 `Pooly.PoolSupervisor` 使用 `Pooly.PoolServer`。以下是更改内容：
 
-Listing 7.5 lib/pooly/supervisor.ex – Top-level supervisor supervises the top-level pool server and pools supervisor
+清单 7.8 lib/pooly/pool_supervisor.ex - 单个池监督器的完整实现
 
-`defmodule Pooly.Supervisor do`
-`use Supervisor`
+```elixir
+defmodule Pooly.PoolSupervisor do
+use Supervisor
 
-`def start_link(pools_config) do                             #1`
-`Supervisor.start_link(__MODULE__, pools_config,`
-`name: __MODULE__)                   #2`
-`end`
+def start_link(pool_config) do
+Supervisor.start_link(__MODULE__, pool_config, name: :”#{pool_config[:name]}Supervisor”)                     #1
+end
 
-`def init(pools_config) do                                   #1`
-`children = [`
-`supervisor(Pooly.PoolsSupervisor, []),                  #3`
-`worker(Pooly.Server, [pools_config])                    #3`
-`]`
+def init(pool_config) do
+opts = [
+strategy: :one_for_all
+]
 
-`opts = [strategy: :one_for_all]`
+children = [
+worker(Pooly.PoolServer, [self, pool_config])     #2
+]
 
-`supervise(children, opts)`
-`end`
-`end`
-#1 Pluralization change from pool\_config to pools\_config.
+supervise(children, opts)
+end
+end
+```
 
+我们在 #1 中给单个池监督器命名，尽管这并非严格必要。这有助于我们在观察器中轻松找到池监督器。
 
-#2 Pooly.Supervisor is now a named process.
+其次，#2 中的子规范从 `Pooly.Server` 更改为 `Pooly.PoolServer`。我们传递相同的参数。尽管我们正在命名 `Pooly.PoolSupervisor`，我们将*不会*在 `Pooly.PoolServer` 中使用该名称，这样我们可以重用来自版本2的 `Pooly.Server` 的大部分实现。
 
+### 7.1.9 添加池(Pool)的核心逻辑
 
-#3 Pooly.Supervisor now supervises two children. Note that Pooly.Server no longer takes the pid Pooly.Supervisor, since we can refer to it by name.
+如上一节所述，大部分逻辑保持不变，只是在一些地方进行了修改以支持多个池。为了节约纸张和屏幕空间，与`Pooly.Server`版本2完全相同的函数被用“`# …`”标记了出来。换句话说，如果你在跟随学习，可以将`Pooly.Server`版本2的实现复制粘贴到`Pooly.PoolyServer`。
 
+以下是`Pooly.PoolServer`的实现：
 
-The major changes to
-`Pooly.Supervisor`
-are mainly the adding of
-`Pooly.PoolsSupervisor`
-as a child and giving
-`Pooly.Supervisor`
-a name. Recall that we are setting the name of
-`Pooly.Supervisor`
-to
-`__MODULE__`
-in #1, this means that we can refer to the process as
-`Pooly.Supervisor`
-instead of pid. Therefore, we do not need to pass in
-`self`
-(see version 2 of
-`Pooly.Supervisor`) into
-`Pooly.Server`.
+#### 清单 7.9 lib/pooly/pool_server.ex - 单个池服务器的完整实现
 
+```elixir
+defmodule Pooly.PoolServer do
+  use GenServer
+  import Supervisor.Spec
 
-7.1.6        Adding the Supervisor of Pools
+  defmodule State do
+    defstruct pool_sup: nil, worker_sup: nil, monitors: nil, size: nil, workers: nil, name: nil, mfa: nil
+  end
 
+  def start_link(pool_sup, pool_config) do
+    GenServer.start_link(__MODULE__, [pool_sup, pool_config], name: name(pool_config[:name]))
+  end
 
-Create
-`pools_supervisor.ex`
-in
-`lib/pooly/`. Here’s the implementation:
+  def checkout(pool_name) do
+    GenServer.call(name(pool_name), :checkout)
+  end
 
+  def checkin(pool_name, worker_pid) do
+    GenServer.cast(name(pool_name), {:checkin, worker_pid})
+  end
 
-Listing 7.6 lib/pooly/pools\_supervisor.ex – Full implementation of the pools supervisor
+  def status(pool_name) do
+    GenServer.call(name(pool_name), :status)
+  end
 
-`defmodule Pooly.PoolsSupervisor do`
-`use Supervisor`
+  # 回调函数
+  # ...
 
-`def start_link do`
-`Supervisor.start_link(__MODULE__, [], name: __MODULE__) #1`
-`end`
+  def init([pool_sup, pool_config]) when is_pid(pool_sup) do
+    Process.flag(:trap_exit, true)
+    monitors = :ets.new(:monitors, [:private])
+    init(pool_config, %State{pool_sup: pool_sup, monitors: monitors})
+  end
 
-`def init(_) do`
-`opts = [`
-`strategy: :one_for_one                                #2`
-`]`
+  def init([{:name, name}|rest], state) do
+    # …
+  end
 
-`supervise([], opts)`
-`end`
-`end`
-Just like
-`Pooly.Supervisor`, we are giving
-`Pooly.PoolsSupervisor`
-a name. Notice that this supervisor has *no* child specifications. In fact, when it starts up, there are no pools attached to it. The reason for this is because, just as in version 2, we want to validate the pool configuration *before* creating any pools. Therefore, the only information we supply is the restart strategy, as shown in #2. Why
-`:one_for_one`? A crash in any of the pools shouldn’t affect every other pool.
+  # 其他初始化函数
+  # ...
 
+  def handle_call(:checkout, {from_pid, _ref}, %{workers: workers, monitors: monitors} = state) do
+    # …
+  end
 
-7.1.7        Making Pooly.Server Dumber
+  def handle_call(:status, _from, %{workers: workers, monitors: monitors} = state) do
+    # …
+  end
 
+  def handle_cast({:checkin, worker}, %{workers: workers, monitors: monitors} = state) do
+    # …
+  end
 
-In version 1 and version 2, we said that
-`Pooly.Server`
-was the brains of the entire operation. No longer is the case. The
-`Pooly.Server`
-is going to have some of its job taken over by the dedicated
-`Pooly.PoolServer`.
+  def handle_info(:start_worker_supervisor, state = %{pool_sup: pool_sup, name: name, mfa: mfa, size: size}) do
+    {:ok, worker_sup} = Supervisor.start_child(pool_sup, supervisor_spec(name, mfa))
+    workers = prepopulate(size, worker_sup)
+    {:no_reply, %{state | worker_sup: worker_sup, workers: workers}}
+  end
 
+  def handle_info({:DOWN, ref, _, _, _}, state = %{monitors: monitors, workers: workers}) do
+    # …
+  end
 
-![](../images//7_6.png)  
+  # 其他处理函数
+  # ...
 
+  def terminate(_reason, _state) do
+    :ok
+  end
 
+  # 私有函数
+  # ...
 
-Figure 7. 6 Logic from the top-level pool server from previous version will be moved into individual pool servers
+  defp name(pool_name) do
+    :"#{pool_name}Server"
+  end
 
+  defp prepopulate(size, sup) do
+    # …
+  end
 
-Most of the APIs are the same from previous versions, which the addition of the
-`pool_name`. Open up
-`lib/pooly/server.ex`
-and *replace* the previous implementation with this:
+  # 其他预填充函数
+  # ...
 
+  defp supervisor_spec(name, mfa) do
+    opts = [id: name <> "WorkerSupervisor", restart: :temporary]
+    supervisor(Pooly.WorkerSupervisor, [self, mfa], opts)
+  end
+end
+```
 
-Listing 7.7 lib/pooly/server.ex – Full implementation of the top-level pool server
+这里有几个显著的变化。服务器的`start_link/2`函数将*池监督器*作为第一个参数。在#3中，池监督器的pid被保存在服务器进程的状态中。此外，注意服务器的状态已扩展以存储池监督器和工作监督器的pid：
 
-`defmodule Pooly.Server do`
-`use GenServer`
-`import Supervisor.Spec`
+```elixir
+defmodule State do
+  defstruct pool_sup: nil, worker_sup: nil, monitors: nil, size: nil, workers: nil, name: nil, mfa: nil
+end
+```
 
-`#######`
-`# API #`
-`#######`
+一旦服务器处理完池配置，它将最终向自己发送`:start_worker_supervisor`消息，如#4所示。这条消息由`handle_info/2`回调处理。在
 
-`def start_link(pools_config) do`
-`GenServer.start_link(__MODULE__, pools_config, name: __MODULE__)`
-`end`
+#5中，池监督器被告知作为子项启动工作监督器，使用#8中定义的子规范。除了`mfa`，我们还传递了服务器进程的pid。一旦返回工作监督器的pid，它就会在#6中被用来预填充工作人员。#2利用`name/1`来引用适当的池服务器以调用相应的函数。
 
-`def checkout(pool_name) do`
-`GenServer.call(:”#{pool_name}Server”, :checkout) #2`
-`end`
+7.1.10     为池添加工作监管器
 
-`def checkin(pool_name, worker_pid) do`
-`GenServer.cast(:”#{pool_name}Server”, {:checkin, worker_pid})              #2`
-`end`
+最后一部分是工作监管器。它负责管理单个工作程序。它管理任何崩溃的工作程序。有一个微妙的细节。在初始化期间，工作监管器创建了与其对应池服务器的*链接*。为什么要这样做？如果池服务器或工作监管器中的任何一个停止工作，另一个继续存在就没有意义了。
 
-`def status(pool_name) do`
-`GenServer.call(:”#{pool_name}Server”, :status)   #2`
-`end`
+![](../images//7_8.png)
 
-`#############`
-`# Callbacks #`
-`#############`
+图 7.8 实现单个池的工作监管器
 
-`def init(pools_config) do                         #3`
-`pools_config |> Enum.each(fn(pool_config) ->    #3`
-`send(self, {:start_pool, pool_config})        #3`
-`end)                                            #3`
+让我们看看完整实现的更多细节：
 
-`{:ok, pools_config}`
-`end`
+代码清单 7.10 lib/pooly/worker_supervisor.ex – 池的工作监管器的完整实现
 
-`def handle_info({:start_pool, pool_config}, state) do #4`
-`{:ok, _pool_sup} = Supervisor.start_child(Pooly.PoolsSupervisor, supervisor_spec(pool_config))                           #4`
-`{:no_reply, state}`
-`end`
+```elixir
+defmodule Pooly.WorkerSupervisor do
+use Supervisor
 
-`#####################`
-`# Private Functions #`
-`#####################`
+def start_link(pool_server, {_,_,_} = mfa) do           #1
+Supervisor.start_link(__MODULE__, [pool_server, mfa]) #1
+end
 
-`defp supervisor_spec(pool_config) do`
-`opts = [id: :”#{pool_config[:name]}Supervisor”]    #5`
-`supervisor(Pooly.PoolSupervisor, [pool_config], opts)`
-`end`
-`end`
-In this version,
-`Pooly.Server`’s job is to *delegate* all the requests to the respective pools, and to start the pools and attach the pools to
-`Pooly.PoolsSupervisor`.
+def init([pool_server, {m,f,a}]) do
+Process.link(pool_server)                             #2
+worker_opts = [restart:  :temporary,
+shutdown: 5000,
+function: f]
 
+children = [worker(m, a, worker_opts)]
+opts     = [strategy:     :simple_one_for_one,
+max_restarts: 5,
+max_seconds:  5]
 
-In #2, we are assuming that each individual pool server is named
+supervise(children, opts)
+end
+end
+```
 
+唯一的变化是增加了额外的`pool_server`参数，并将`pool_server`与工作监管器进程链接。为什么？如前所述，这两个进程之间存在依赖关系，当工作监管器停止工作时，需要通知池服务器。同样，如果工作监管器崩溃，它也应该同时带下池服务器。
 
-`:”#{pool_name}Server”`. Notice that the name is an *atom*! Sadly, I have lost hours (and hair) on this because I failed to read the documentation properly.
+为了让池服务器处理这个消息，你需要在`lib/pooly/pool_server.ex`中添加另一个`handle_info/2`回调：
 
+代码清单 7.11 lib/pooly/pool_server.ex – 让池服务器检测到工作监管器停止工作
 
-In #3 the
-`pools_config`
-is iterated and the
-`{:start_pool, pool_config}`
-message is sent itself. The handling of the message is performed in #4, where
-`Pooly.PoolsSupervisor`
-is told to start a child based on the given
-`pool_config`.
+```elixir
+defmodule Pooly.PoolServer do
 
+#############
+# Callbacks #
+#############
 
-There is one *tiny* caveat to look out for. Notice in #5 we make sure that each
-`Pooly.PoolSupervisor`
-is started with a *unique* supervisor specification id. If you forget to do this, you would get a cryptic error message such as:
+def handle_info({:EXIT, worker_sup, reason}, state = %{worker_sup: worker_sup}) do
+{:stop, reason, state}
+end
+end
+```
 
-`12:08:16.336 [error] GenServer Pooly.Server terminating`
-`Last message: {:start_pool, [name: “Pool2”, mfa: {SampleWorker, :start_link, []}, size: 2]}`
-`State: [[name: “Pool1”, mfa: {SampleWorker, :start_link, []}, size: 2], [name: “Pool2”, mfa: {SampleWorker, :start_link, []}, size: 2]]`
-`** (exit) an exception was raised:`
-`** (MatchError) no match of right hand side value: {:error, {:already_started, #PID<0.142.0>}}`
-`(pooly) lib/pooly/server.ex:38: Pooly.Server.handle_info/2`
-`(stdlib) gen_server.erl:593: :gen_server.try_dispatch/4`
-`(stdlib) gen_server.erl:659: :gen_server.handle_msg/5``(stdlib) proc_lib.erl:237: :proc_lib.init_p_do_apply/3`
-The clue here is
-`{:error, {:already_started, #PID<0.142.0>}}`. I spent a couple of hours trying to figure this out before stumbling on this solution. What happens when a
-`Pooly.PoolSupervisor`
-is starts with a given
-`pool_config`?
+在这里，每当工作监管器退出时，它也会终止池服务器，并且原因是与终止工作监管器的原因相同。
 
+7.1.11     将其实际运行
 
-7.1.8        Adding the Pool Supervisor
+让我们确保我们正确地连接了一切。首先，打开`lib/pooly.ex`来配置池。确保`start/2`函数看起来像这样：
 
+代码清单 7.12 lib/pooly.ex – 配置 Pooly 启动三个不同大小的池
 
-![](../images//7_7.png)  
+```elixir
+defmodule Pooly do
+use Application
 
+def start(_type, _args) do
+pools_config =
+[
+[name: “Pool1”, mfa: {SampleWorker, :start_link, []}, size: 2],
+[name: “Pool2”, mfa: {SampleWorker, :start_link, []}, size: 3],
+[name: “Pool3”, mfa: {SampleWorker, :start_link, []}, size: 4]
+]
 
+start_pools(pools_config)
+end
 
-Figure 7. 7 Implementing the individual pool supervisors
+# …end
+```
 
+在这里，我们告诉 Pooly 创建三个池，每个池具有给定的大小和工作类型。为了简单（实际上是懒惰），我们在所有三个池中都使用了`SampleWorker`。在一个新的终端会话中，启动`iex`并启动 Observer：
 
-`Pooly.PoolSupervisor`
-takes the place of
-`Pooly.Supervisor`
-of previous versions. As such, there are only a few minor changes. Firstly, each
-`Pooly.PoolSupervisor`
-is now initialized with a name. Secondly, we need to tell
-`Pooly.PoolSupervisor`
-to use
-`Pooly.PoolServer`
-instead. Here are the changes:
+```shell
+% iex -S mix
+iex> :observer.start
+```
 
+见证你所创建的壮丽监管树：
 
-Listing 7.8 lib/pooly/pool\_supervisor.ex – Full implementation of individual pool supervisor
+![](../images//7_9.png)
 
-`defmodule Pooly.PoolSupervisor do`
-`use Supervisor`
+图 7.9 从 Observer 看到的 Pooly 监管树
 
-`def start_link(pool_config) do`
-`Supervisor.start_link(__MODULE__, pool_config, name: :”#{pool_config[:name]}Supervisor”)                     #1`
-`end`
+现在，从监管树的叶子（最低/最右边）开始，
 
-`def init(pool_config) do`
-`opts = [`
-`strategy: :one_for_all`
-`]`
+尝试右击进程并杀死它。你会再次注意到一个新进程会接管。
 
-`children = [`
-`worker(Pooly.PoolServer, [self, pool_config])     #2`
-`]`
+接下来，往上走。比如，当杀死`Pool3Server`时会发生什么？你会注意到对应的`WorkerSupervisor`和它下面的工作程序都会被杀死并重新生成。重要的是要注意，`Pool3Server`是一个全新的进程。
 
-`supervise(children, opts)`
-`end`
-`end`
-We give individual pool supervisors a name in #1, although this is not strictly necessary. It helps up easily pinpoint the pool supervisors when viewing them in Observer.
+现在再往上走。当你杀死一个`PoolSupervisor`时会发生什么？正如预期的那样，它下面的所有东西都会被杀死，另一个`PoolSupervisor`会重新生成，它下面的所有东西也会重新生成。注意不会发生的事情。应用程序的其余部分不会受到影响。这不是很棒吗？当崩溃发生时，正如它们不可避免地会发生的那样，拥有一个精心层次化的监管层次结构可以让错误以非常孤立的方式处理，从而不影响应用程序的其余部分。
 
+7.2           版本 4：实现溢出和排队功能
 
-Secondly, the child specification in #2 is changed from
-`Pooly.Server`
-to
-`Pooly.PoolServer`. We are passing the same parameters. Even though we are naming
-`Pooly.PoolSupervisor`, we will *not* be using the name in
-`Pooly.PoolServer`, so that we can reuse much of the implementation from
-`Pooly.Server`
-from version 2.
+在 Pooly 的最终版本中，我们将扩展它以支持可变数量的工作进程，方法是指定一个*最大溢出量*。
 
+我们还希望引入*排队*工作进程的概念。也就是说，当达到最大溢出限制时，Pooly 能够为愿意*阻塞并等待*下一个可用工作进程的消费者排队工作进程。
 
-7.1.9        Adding the Brains for the Pool
+7.2.1        实现最大溢出
 
+像往常一样，为了指定最大溢出，我们在池配置中添加了一个新字段。在 `lib/pooly.ex` 中，修改 `start/2` 中的 `pools_config`，使其看起来如下：
 
-As noted in the previous section, much of the logic remains unchanged, except in places to support multiple pools. In the interest of saving trees and screen real-estate, functions that are exactly the same as
-`Pooly.Server`
-version 2 has their implementation stubbed out with “`# …`.” In other words, if you are following along, you can copy and paste the implementation of
-`Pooly.Server`
-version 2 to
-`Pooly.PoolyServer`.
+清单 7.13 lib/pooly.ex - 实现最大溢出
 
+```elixir
+defmodule Pooly do
 
-Here is implementation of
-`Pooly.PoolServer`:
+def start(_type, _args) do
+pools_config =
+[
+[name: “Pool1”,
+mfa: {SampleWorker, :start_link, []},
+size: 2,
+max_overflow: 3                       #1
+],
+[name: “Pool2”,
+mfa: {SampleWorker, :start_link, []},
+size: 3,
+max_overflow: 0                       #1
+],
+[name: “Pool3”,
+mfa: {SampleWorker, :start_link, []},
+size: 4,
+max_overflow: 0                       #1
+]
+]
 
+start_pools(pools_config)
+end
+end
+```
+#1 在池配置中指定最大溢出。
 
-Listing 7.9 lib/pooly/pool\_server.ex – Full implementation of individual pool server
+现在我们有了池配置的新选项，我们必须前往 `lib/pooly/pool_server.ex` 以支持 `max_overflow`。这包括：
 
-`defmodule Pooly.PoolServer do`
-`use GenServer`
-`import Supervisor.Spec`
+·      在 `State` 中添加一个名为 `max_overflow` 的条目
 
-`defmodule State do`
-`defstruct pool_sup: nil, worker_sup: nil, monitors: nil, size: nil, workers: nil, name: nil, mfa: nil`
-`end`
+·      在 `State` 中添加一个名为 `overflow` 的条目，用于跟踪当前溢出计数
 
-`def start_link(pool_sup, pool_config) do`
-`GenServer.start_link(__MODULE__, [pool_sup, pool_config], name: name(pool_config[:name]))                               #1`
-`end`
+·      在 `init/2` 中添加一个函数子句来处理 `max_overflow`
 
-`def checkout(pool_name) do                                  #2`
-`GenServer.call(name(pool_name), :checkout)                #2`
-`end`
+以下是添加内容：
 
-`def checkin(pool_name, worker_pid) do                       #2`
-`GenServer.cast(name(pool_name), {:checkin, worker_pid})   #2`
-`end`
+清单 7.14 lib/pooly/pool_server.ex - 在池服务器中添加最大溢出选项
 
-`def status(pool_name) do                                    #2`
-`GenServer.call(name(pool_name), :status)                  #2`
-`end`
+```elixir
+defmodule Pooly.PoolServer do
 
-`#############`
-`# Callbacks #`
-`############j`
+defmodule State do
+defstruct pool_sup: nil, worker_sup: nil, monitors: nil, size: nil, workers: nil, name: nil, mfa: nil, overflow: nil, max_overflow: nil
+end
 
-`def init([pool_sup, pool_config]) when is_pid(pool_sup) do`
-`Process.flag(:trap_exit, true)`
-`monitors = :ets.new(:monitors, [:private])`
-`init(pool_config, %State{pool_sup: pool_sup, monitors:    monitors})         #3`
-`end`
+#############
+# Callbacks #
+#############
 
-`def init([{:name, name}|rest], state) do`
-`# …`
-`end`
+def init([{:name, name}|rest], state) do
+# …
+end
 
-`def init([{:mfa, mfa}|rest], state) do`
-`# …`
-`end`
+# … more init/1 definitions
 
-`def init([{:size, size}|rest], state) do`
-`# …`
-`end`
+def init([{:max_overflow, max_overflow}|rest], state) do
+init(rest, %{state | max_overflow: max_overflow})
+end
 
-`def init([], state) do`
-`send(self, :start_worker_supervisor)                    #4`
-`{:ok, state}`
-`end`
+def init([], state) do
+#…
+end
 
-`def init([_|rest], state) do`
-`# …`
-`end`
+def init([_|rest], state) do
+# …
+end
+end
+```
+接下来，我们必须考虑实际溢出的情况。当忙碌工作进程的总数超过 `size` *并且* 在 `max_overflow` 限制内时，就会发生溢出。何时会发生溢出？当工作进程被*取出*时。因此，唯一需要查看的地方是 `handle_call({:checkout, block}, from, state)`。
 
-`def handle_call(:checkout, {from_pid, _ref}, %{workers: workers, monitors: monitors} = state) do`
-`# …`
-`end`
+处理这种情况相当简单。#1 检查我们是否在溢出限制内。如果是，将创建一个新的工作进程，并将必要的簿记信息添加到 `monitors` ETS 表中。然后将工作进程 pid 作为回复发送给消费者进程，并增加 `overflow` 计数：
 
-`def handle_call(:status, _from, %{workers: workers, monitors: monitors} = state) do`
-`# …`
-`end`
+清单 7.15 lib/pooly/pool_server.ex - 在池服务器中处理取出时的溢出
 
-`def handle_cast({:checkin, worker}, %{workers: workers, monitors: monitors} = state) do`
-`# …`
-`end`
+```elixir
+defmodule Pooly.PoolServer do
 
-`def handle_info(:start_worker_supervisor, state = %{pool_sup: pool_sup, name: name, mfa: mfa, size: size}) do`
-`{:ok, worker_sup} = Supervisor.start_child(pool_sup, supervisor_spec(name, mfa))#5`
-`workers = prepopulate(size, worker_sup)                 #6`
-`{:no_reply, %{state | worker_sup: worker_sup, workers: workers}}`
-`end`
+#############
+# Callbacks #
+#############
 
-`def handle_info({:DOWN, ref, _, _, _}, state = %{monitors: monitors, workers: workers}) do`
-`# …`
-`end`
+def handle_call({:checkout, block}, {from_pid, _ref} = from, state) do
+%{worker_sup:   worker_sup,
+workers:      workers,
+monitors:     monitors,
+overflow:     overflow,
+max_overflow: max_overflow} = state
 
-`def handle_info({:EXIT, pid, _reason}, state = %{monitors: monitors, workers: workers, pool_sup: pool_sup}) do`
-`case :ets.lookup(monitors, pid) do`
-`[{pid, ref}] ->`
-`true = Process.demonitor(ref)`
-`true = :ets.delete(monitors, pid)`
-`new_state = %{state | workers: [new_worker(pool_sup)|workers]}`
-`{:no_reply, new_state}`
+case workers do
 
-`_ ->`
-`{:no_reply, state}`
-`end`
-`end`
 
-`def terminate(_reason, _state) do`
-`:ok`
-`end`
+[worker|rest] ->
+# …
+{:reply, worker, %{state | workers: rest}}
 
-`#####################`
-`# Private Functions #`
-`#####################`
+[] when max_overflow > 0 and overflow < max_overflow -> #1
+{worker, ref} = new_worker(worker_sup, from_pid)
+true = :ets.insert(monitors, {worker, ref})
+{:reply, worker, %{state | overflow: overflow+1}}
 
-`defp name(pool_name) do                                   #7`
-`:”#{pool_name}Server”`
-`end`
+[] ->
+{:reply, :full, state};
+end
+end
+end
+```
+7.2.2        处理工作进程签入
 
-`defp prepopulate(size, sup) do`
-`# …`
-`end`
-
-`defp prepopulate(size, _sup, workers) when size < 1 do`
-`# …`
-`end`
-
-`defp prepopulate(size, sup, workers) do`
-`# …`
-`end`
-
-`defp new_worker(sup) do`
-`# …`
-`end`
-
-`defp supervisor_spec(name, mfa) do                         #8`
-`opts = [id: name <> “WorkerSupervisor”, restart: :temporary]`
-`supervisor(Pooly.WorkerSupervisor, [self, mfa], opts)    #9`
-`end`
-`end`
-There are a few notable changes. The server’s
-`start_link/2`
-function takes in the *pool supervisor* as the first argument. In #3, the pid of the pool supervisor is saved in the state of the server process. Also, note that the state of the server has been extended to store the pid of the pool supervisor and worker supervisor:
-
-`defmodule State do`
-`defstruct pool_sup: nil, worker_sup: nil, monitors: nil, size: nil,`
-`workers: nil, name: nil, mfa: nil``end`
-Once the server is done processing the pool configuration, it will eventually send itself the
-`:start_worker_supervisor`
-message to itself, as seen in #4. This message is handled by the
-`handle_info/2`
-callback. In #5, the pool supervisor is told to start a worker supervisor as a child, using the child specification defined in #8. In addition to
-`mfa`, we also pass in the pid of the server process. Once the pid of the worker supervisor is returned, it is used in #6 to pre-populate itself with workers. #2 makes use of
-`name/1`
-to reference the appropriate pool server to call the appropriate functions.
-
-
-7.1.10     Adding the Worker Supervisor for the Pool
-
-
-The last piece is the worker supervisor. It is tasked with managing the individual workers. It manages any crashing workers. There is a subtle detail. During initialization, the worker supervisor creates a *link* its corresponding pool server. Why bother? If either the pool server or worker supervisor goes down, there is no point in one or the other to continue to exist.
-
-
-![](../images//7_8.png)  
-
-
-
-Figure 7. 8 Implementing the individual pools' worker supervisor
-
-
-Let’s look at the full implementation for more details:
-
-
-Listing 7.10 lib/pooly/worker\_supervisor.ex – Full implementation of the pool's worker supervisor
-
-`defmodule Pooly.WorkerSupervisor do`
-`use Supervisor`
-
-`def start_link(pool_server, {_,_,_} = mfa) do           #1`
-`Supervisor.start_link(__MODULE__, [pool_server, mfa]) #1`
-`end`
-
-`def init([pool_server, {m,f,a}]) do`
-`Process.link(pool_server)                             #2`
-`worker_opts = [restart:  :temporary,`
-`shutdown: 5000,`
-`function: f]`
-
-`children = [worker(m, a, worker_opts)]`
-`opts     = [strategy:     :simple_one_for_one,`
-`max_restarts: 5,`
-`max_seconds:  5]`
-
-`supervise(children, opts)`
-`end`
-`end`
-The only changes are the additional
-`pool_server`
-argument, and linking of
-`pool_server`
-to the worker supervisor process. Why? As previously mentioned, there is a dependency between both processes, and the pool server needs to be notified when the worker supervisor goes down. Similarly, should the worker supervisor crash, it should also take down the pool server.
-
-
-In order for the pool server to handle the message, you need to add another
-`handle_info/2`
-callback in
-`lib/pooly/pool_server.ex`:ð
-
-
-Listing 7.11 lib/pooly/pool\_server.ex – Let the pool server detect if the worker supervisor goes down
-
-`defmodule Pooly.PoolServer do`
-
-`#############`
-`# Callbacks #`
-`#############`
-
-`def handle_info({:EXIT, worker_sup, reason}, state = %{worker_sup: worker_sup}) do`
-`{:stop, reason, state}`
-`end`
-`end`
-Here, whenever the worker supervisor exits, it will terminate the pool server too, with the reason being the same reason that terminated the worker supervisor.
-
-
-7.1.11     Taking it for a spin
-
-
-Let’s make sure we wired everything up correctly. First, open up
-`lib/pooly.ex`
-to configure the pool. Make sure the
-`start/2`
-function looks like this:
-
-
-Listing 7.12 lib/pooly.ex – Configuring Pooly to start three pools of various sizes
-
-`defmodule Pooly do`
-`use Application`
-
-`def start(_type, _args) do`
-`pools_config =`
-`[`
-`[name: “Pool1”, mfa: {SampleWorker, :start_link, []}, size: 2],`
-`[name: “Pool2”, mfa: {SampleWorker, :start_link, []}, size: 3],`
-`[name: “Pool3”, mfa: {SampleWorker, :start_link, []}, size: 4]`
-`]`
-
-`start_pools(pools_config)`
-`end`
-
-`# …``end`
-Here, we are telling Pooly to create three pools, each with a given size and type of worker. For simplicity (laziness, really), we are using
-`SampleWorker`
-in all three pools. In a fresh terminal session, launch
-`iex`
-and start Observer:
-
-`% iex -S mix`
-`iex> :observer.start`
-Bear witness to the glorious supervision tree you have created:
-
-
-![](../images//7_9.png)  
-
-
-
-Figure 7. 9 The Pooly supervision tree as seen from Observer
-
-
-Now, starting from the leaves (the lowest/rightmost) of the supervision tree, try right-clicking the process and killing it. You will again notice that a new process will take over.
-
-
-Next, work your way higher. What happens when say,
-`Pool3Server`
-is killed? You will notice that the corresponding
-`WorkerSupervisor`
-and the workers underneath it will all be killed and the re-spawned. It is important to note that
-`Pool3Server`
-is a brand new process.
-
-
-Go even higher now. What happens when you kill a
-`PoolSupervisor`? As expected, everything underneath it gets killed, and another
-`PoolSupervisor`
-is re-spawned and everything underneath it re-spawns too. Notice what *doesn’t* happen. The rest of the application remains unaffected. Isn’t that wonderful? When crashes happen, as the inevitably will, having a nicely layered supervision hierarchy allows the error to be handled in a very isolated way, thereby not affecting the rest of the application.
-
-
-7.2           Version 4: Implementing Overflowing and Queuing
-
-
-In the final version of Pooly, we are going to extend it a little to support a variable number of workers by specifying a *maximum overflow*.
-
-
-We also want to introduce the notion of *queuing* up workers. That is, when the maximum overflow limit has been reached, Pooly has the ability to queue up workers for consumers that are willing to *block and wait* for a next available worker.
-
-
-7.2.1        Implementing Maximum Overflow
-
-
-As usual, in order to specify the maximum overflow, we add a new field to the pool configuration. In
-`lib/pooly.ex`, modify
-`pools_config`
-in
-`start/2`
-to look like:
-
-
-Listing 7.13 lib/pooly.ex – Implementing maximum overflow
-
-`defmodule Pooly do`
-
-`def start(_type, _args) do`
-`pools_config =`
-`[`
-`[name: “Pool1”,`
-`mfa: {SampleWorker, :start_link, []},`
-`size: 2,`
-`max_overflow: 3                       #1`
-`],`
-`[name: “Pool2”,`
-`mfa: {SampleWorker, :start_link, []},`
-`size: 3,`
-`max_overflow: 0                       #1`
-`],`
-`[name: “Pool3”,`
-`mfa: {SampleWorker, :start_link, []},`
-`size: 4,`
-`max_overflow: 0                       #1`
-`]`
-
-`]`
-
-`start_pools(pools_config)`
-`end`
-`end`
-#1 Specifying the maximum overflow in the pools configuration.
-
-
-Now that we have a new option for the pool configuration, we must now head over to
-`lib/pooly/pool_server.ex`
-to add support for
-`max_overflow`. This includes:
-
-
-·      Adding an entry called
-`max_overflow`
-in
-`State`
-
-
-·      Adding an entry called
-`overflow`
-in
-`State`
-to keep track of the current overflow count
-
-
-·      Adding a function clause in
-`init/2`
-to handle
-`max_overflow`
-
-
-Here are the additions:
-
-
-Listing 7.14 lib/pooly/pool\_server.ex – Adding a maximum overflow option in the pool server
-
-`defmodule Pooly.PoolServer do`
-
-`defmodule State do`
-`defstruct pool_sup: nil, worker_sup: nil, monitors: nil, size: nil, workers: nil, name: nil, mfa: nil, overflow: nil, max_overflow: nil`
-`end`
-
-`#############`
-`# Callbacks #`
-`#############`
-
-`def init([{:name, name}|rest], state) do`
-`# …`
-`end`
-
-`# … more init/1 definitions`
-
-`def init([{:max_overflow, max_overflow}|rest], state) do`
-`init(rest, %{state | max_overflow: max_overflow})`
-`end`
-
-`def init([], state) do`
-`#…`
-`end`
-
-`def init([_|rest], state) do`
-`# …`
-`end`
-`end`
-Next, we must consider the case of an actual overflow. An overflow is said to happen if the total number of busy workers exceeds
-`size`
-*and* is within the limits of
-`max_overflow`. When can overflows happen? When a worker is checked *out*. Therefore, the only place to look for is
-`handle_call({:checkout, block}, from, state)`.
-
-
-Handling this case is quite simple. #1 checks if we are within the limits of overflowing. If so, a new worker is created and the necessary bookkeeping information is added into the
-`monitors`
-ETS table. A reply containing the worker pid is given to the consumer process along with an increment of the
-`overflow`
-count:
-
-
-Listing 7.15 lib/pooly/pool\_server.ex – Handling overflows during checking out in the pool server
-
-`defmodule Pooly.PoolServer do`
-
-`#############`
-`# Callbacks #`
-`#############`
-
-`def handle_call({:checkout, block}, {from_pid, _ref} = from, state) do`
-`%{worker_sup:   worker_sup,`
-`workers:      workers,`
-`monitors:     monitors,`
-`overflow:     overflow,`
-`max_overflow: max_overflow} = state`
-
-`case workers do`
-`[worker|rest] ->`
-`# …`
-`{:reply, worker, %{state | workers: rest}}`
-
-`[] when max_overflow > 0 and overflow < max_overflow -> #1`
-`{worker, ref} = new_worker(worker_sup, from_pid)`
-`true = :ets.insert(monitors, {worker, ref})`
-`{:reply, worker, %{state | overflow: overflow+1}}`
-
-`[] ->`
-`{:reply, :full, state};`
-`end`
-`end`
-`end`
-7.2.2        Handling Worker Check-ins
-
-
-Now that we can handle overflow, how then do we handle worker check-ins? How then do we handle *check-ins*? Previously in version 2, all we did was add the worker pid back into the
-`workers`
-field of the
-`PoolServer`
-state:
+现在我们可以处理溢出了，那么我们该如何处理工作进程的签入呢？我们该如何处理*签入*？之前在版本 2 中，我们所做的一切只是将工作进程 pid 添加回 `PoolServer` 状态的 `workers` 字段：
 
 `{:no_reply, %{state | workers: [pid|workers]}}`
-However, when handling a check-in of an *overflowed* worker, we do not want to add it back into the
-`workers`
-field. It is sufficient to just *dismiss* the worker. We will implement a helper function to handle check-ins:
+然而，在处理*溢出*工作进程的签入时，我们不想将其添加回 `workers` 字段。只需*解雇*工作进程就足够了。我们将实现一个辅助函数来处理签入：
+
+清单 7.16 lib/pooly/pool_server.ex - 在池服务器中处理工作进程溢出
+
+```elixir
+defmodule Pooly.PoolServer do
+
+#####################
+# Private Functions #
+#####################
+
+def handle_checkin(pid, state) do
+%{worker_sup:   worker_sup,
+workers:      workers,
+monitors:     monitors,
+overflow:     overflow} = state
+
+if overflow > 0 do
+:ok = dismiss_worker(worker_sup, pid)
+%{state | waiting: empty, overflow: overflow-1}
+else
+%{state | waiting: empty, workers: [pid|workers], overflow: 0}
+end
+end
 
+defp dismiss_worker(sup, pid) do
+true = Process.unlink(pid)
+Supervisor.terminate_child(sup, pid)
+end
+end
+```
+`handle_checkin/2` 所做的是检查当工作进程签回时池是否确实已溢出。如果是，它会委托给 `dismiss_worker/2` 来终止工作进程，并减少 `overflow`。否则，应该将工作进程添加回 `workers`，就像以前一样。
 
-Listing 7. 16 lib/pooly/pool\_server.ex – Handling worker overflows in the pool server
+解雇工作进程的函数应该不难理解。我们需要做的就是将工作进程从池服务器中断开链接，并告诉工作进程监督器终止该子进程。现在，我们可以更新 `handle_cast({:checkin, worker}, state)`：
+
+清单 7.17 lib/pooly/pool_server.ex - 使用 handle_checkin/2 更新签入回调
 
-`defmodule Pooly.PoolServer do`
+```elixir
+defmodule Pooly.PoolServer do
+
+#############
+# Callbacks #
+#############
+
+def handle_cast({:checkin, worker}, %{monitors: monitors} = state) do
+case :ets.lookup(monitors, worker) do
+[{pid, ref}] ->
+# …
+new_state = handle_checkin(pid, state) #1
+{:no_reply, new_state}
+
+[] ->
+{:no_reply, state}
+end
+end
+end
+```
+#1 更新此行以使用 handle_checkin/2
+
+### 7.2.3 处理工作者退出
+
+当溢出的工作者退出时会发生什么？让我们来看一下回调函数 `handle_info({:EXIT, pid, _reason}, state)`。类似于处理工作者签到时的情况，我们将处理工作者退出的任务委托给一个辅助函数：
+
+清单 7.18 lib/pooly/pool_server.ex - 一个计算工作者退出状态的辅助函数
+
+```elixir
+defmodule Pooly.PoolServer do
+
+#####################
+# 私有函数 #
+#####################
+
+defp handle_worker_exit(pid, state) do
+%{worker_sup:   worker_sup,
+workers:      workers,
+monitors:     monitors,
+overflow:     overflow} = state
+
+if overflow > 0 do
+%{state | overflow: overflow-1}
+else
+%{state | workers: [new_worker(worker_sup)|workers]}
+end
+end
+end
+```
+
+逻辑与 `handle_checkin/2` 相反。我们检查池是否溢出，如果是，则减少计数器。由于池溢出，我们不需要将工作者重新添加到池中。另一方面，如果池没有溢出，那么我们需要将一个工作者重新添加到工作者列表中。
+
+清单 7.19 lib/pooly/pool_server.ex - 更新 handle_info 回调以处理工作者退出
+
+```elixir
+defmodule Pooly.PoolServer do
+
+#############
+# 回调 #
+#############
+
+def handle_info({:EXIT, pid, _reason}, state = %{monitors: monitors, workers: workers, worker_sup: worker_sup}) do
+case :ets.lookup(monitors, pid) do
+[{pid, ref}] ->
+# …
+new_state = handle_worker_exit(pid, state) #1
+{:no_reply, new_state}
 
-`#####################`
-`# Private Functions #`
-`#####################`
+_ ->
+{:no_reply, state}
+end
+end
+end
+```
 
-`def handle_checkin(pid, state) do`
-`%{worker_sup:   worker_sup,`
-`workers:      workers,`
-`monitors:     monitors,`
-`overflow:     overflow} = state`
+#1 更新这行以使用 handle_worker_exit/2
+
+### 7.2.4 更新状态以包含溢出信息
+
+让我们给 `Pooly` 增加报告它是否溢出的能力。池子将有三种状态：`:overflow`、`:full` 和 `:ready`。这是更新的 `handle_call(:status, from, state)` 实现：
+
+清单 7.20 lib/pooly/pool_server.ex - 在状态中添加溢出信息
 
-`if overflow > 0 do`
-`:ok = dismiss_worker(worker_sup, pid)`
-`%{state | waiting: empty, overflow: overflow-1}`
-`else`
-`%{state | waiting: empty, workers: [pid|workers], overflow: 0}`
-`end`
-`end`
+```elixir
+defmodule Pooly.PoolServer do
+
+#############
+# 回调 #
+#############
+
+def handle_call(:status, _from, %{workers: workers, monitors: monitors} = state) do
+{:reply, {state_name(state), length(workers), :ets.info(monitors, :size)}, state}
+end
+
+#####################
+# 私有函数 #
+#####################
 
-`defp dismiss_worker(sup, pid) do`
-`true = Process.unlink(pid)`
-`Supervisor.terminate_child(sup, pid)`
-`end`
-`end`
-What
-`handle_checkin/2`
-does is check that the pool is indeed overflowed when a worker is being checked back in. If so, it delegates to
-`dismiss_worker/2`
-to terminate the worker, and decrement
-`overflow`. Otherwise, the worker should be added back into
-`workers`
-as before.
+defp state_name(%State{overflow: overflow, max_overflow: max_overflow, workers: workers}) when overflow < 1 do
+case length(workers) == 0 do
+true ->
+if max_overflow < 1 do
+:full
+else
+:overflow
+end
+false ->
+:ready
+end
+end
 
+defp state_name(%State{overflow: max_overflow, max_overflow: max_overflow}) do
+:full
+end
 
-The function for dismissing workers should not be too hard to understand. All we need to do is unlink the worker from the pool server, and tell the worker supervisor to terminate the child. Now, we can update
-`handle_cast({:checkin, worker}, state)`:
+defp state_name(_state) do
+:overflow
+end
+end
+```
 
+7.2.5 队列工作进程
 
-Listing 7.17 lib/pooly/pool\_server.ex – Updating the check-in callback to use handle\_checkin/2
+对于 `Pooly` 的最后一部分，我们将处理消费者愿意等待工作进程可用的情况。换句话说，消费者进程愿意阻塞，直到工作进程池释放出一个工作进程。
 
-`defmodule Pooly.PoolServer do`
+为了实现这一点，我们需要对工作进程进行排队，并将新释放的工作进程与等待的消费者进程匹配。
 
-`#############`
-`# Callbacks #`
-`#############`
+阻塞消费者
 
-`def handle_cast({:checkin, worker}, %{monitors: monitors} = state) do`
-`case :ets.lookup(monitors, worker) do`
-`[{pid, ref}] ->`
-`# …`
-`new_state = handle_checkin(pid, state) #1`
-`{:no_reply, new_state}`
+消费者必须告知 `Pooly` 是否愿意阻塞。我们可以通过简单扩展 `lib/pooly.ex` 中的 `checkout` API 来实现这一点：
 
-`[] ->`
-`{:no_reply, state}`
-`end`
-`end``end`
-#1 Update this line to use handle\_checkin/2
+```elixir
+defmodule Pooly do
+@timeout 5000
 
+####### 
+# API #
+#######
 
-7.2.3        Handling Worker Exits
+def checkout(pool_name, block \\ true, timeout \\ @timeout) do
+    Pooly.Server.checkout(pool_name, block, timeout)
+end
+end
+```
+在这个新版本的 `checkout` 中，我们添加了两个额外的参数：`block` 和 `timeout`。现在转到 `lib/pooly/server.ex`，相应地更新 `checkout` 函数：
 
+```elixir
+defmodule Pooly.Server do
 
-What happens when an overflowed worker exits? Let’s turn to the callback function
-`handle_info({:EXIT, pid, _reason}, state)`. Similar to the case when handling worker check-ins, we delegate the task of handling worker exits to a helper function:
+#######
+# API #
+#######
 
+def checkout(pool_name, block, timeout) do
+    Pooly.PoolServer.checkout(pool_name, block, timeout)
+end
+end
+```
+现在，进入实际实现的核心，`lib/pooly/pool_server.ex`：
 
-Listing 7.18 lib/pooly/pool\_server.ex – A helper function to compute the state for worker exits
+清单 7.21 lib/pooly/pool_server.ex —— 设置 Pool Server 以使用队列等待消费者
 
-`defmodule Pooly.PoolServer do`
+```elixir
+defmodule Pooly.PoolServer do
 
-`#####################`
-`# Private Functions #`
-`#####################`
+defmodule State do
+    defstruct pool_sup: nil, …, waiting: nil, …, max_overflow: nil #1
+end
 
-`defp handle_worker_exit(pid, state) do`
-`%{worker_sup:   worker_sup,`
-`workers:      workers,`
-`monitors:     monitors,`
-`overflow:     overflow} = state`
+#############
+# Callbacks #
+#############
 
-`if overflow > 0 do`
-`%{state | overflow: overflow-1}`
-`else`
-`%{state | workers: [new_worker(worker_sup)|workers]}`
-`end`
-`end``end`
-The logic is the reverse of
-`handle_checkin/2`. We check if the pool is overflowed, and if so, decrement the counter. Since the pool is overflowed, we do not bother to add the worker back into the pool. On the other hand, if the pool is not overflowed, then we need to add a worker back into the worker list.
+def init([pool_sup, pool_config]) when is_pid(pool_sup) do
+    Process.flag(:trap_exit, true)
+    monitors = :ets.new(:monitors, [:private])
+    waiting  = :queue.new                              #1
+    state    = %State{pool_sup: pool_sup, monitors: monitors, waiting: waiting, overflow: 0}                          #1
 
+    init(pool_config, state)
+end
 
-Listing 7.19 lib/pooly/pool\_server.ex – Updating the handle\_info callback to handle worker exits
+#######
+# API #
+#######
 
-`defmodule Pooly.PoolServer do`
+def checkout(pool_name, block, timeout) do
+    GenServer.call(name(pool_name), {:checkout, block}, timeout) #2
+end
+end
+```
+#1 更新 state 以存储等待消费者的队列。
 
-`#############`
-`# Callbacks #`
-`#############`
+#2 为 checkout 添加 block 和 timeout 回调。
 
-`def handle_info({:EXIT, pid, _reason}, state = %{monitors: monitors, workers: workers, worker_sup: worker_sup}) do`
-`case :ets.lookup(monitors, pid) do`
-`[{pid, ref}] ->`
-`# …`
-`new_state = handle_worker_exit(pid, state) #1`
-`{:no_reply, new_state}`
+首先，使用 `waiting` 字段更新 state。这将存储消费者的*队列*。虽然 Elixir 没有自带队列数据结构，但这并不是问题！Erlang 提供了队列实现。这里有一个更大的教训。每当你发现 Elixir 中缺少某些功能时，不要急于寻找第三方库，试着看看 Erlang 是否有你需要的功能。这凸显了 Erlang 和 Elixir 之间的出色互操作性。
 
-`_ ->`
-`{:no_reply, state}`
-`end`
-`end`
-`end`
-#1 Update this line to use handle\_worker\_exit/2
+7.2.6 小间歇：Erlang 中的队列
 
+Erlang 提供的队列实现非常有趣。我将用例子说明。我们只看看使用队列的基础知识，即创建队列，向队列中添加和移除项目。在一个新的 `iex` 会话中，创建一个队列：
 
-7.2.4        Updating Status with Overflow Information
+```elixir
+iex(1)> q = :queue.new
+{[], []}
+```
+注意返回值是一个包含两个元素的元组。更准确地说，是列表。为什么是两个元素？为了回答这个问题，向队列中添加几个项目：
 
+```elixir
+iex(2)> q = :queue.in(“uno”, q)
+{[“uno”], []}
 
-Let’s give
-`Pooly`
-the ability to report whether it is overflowed or not. The pool will have three states:
-`:overflow`,
-`:full`
-and
-`:ready`. Here’s the updated implementation of
-`handle_call(:status, from, state)`:
+iex(3)> q = :queue.in(“dos”, q)
+{[“dos”], [“uno”]}
 
+iex(4)> q = :queue.in(“tres”, q)
+{[“tres”, “dos”], [“uno”]}
+```
+元组的第一个元素（即队列的头部）是元组的*第二
 
-Listing 7.20 lib/pooly/pool\_server.ex – Adding overflow information into the status
+*个元素，而队列的其余部分则由元组的*第一个*元素表示。现在，尝试从队列中移除一个元素：
 
-`defmodule Pooly.PoolServer do`
-
-`#############`
-`# Callbacks #`
-`#############`
-
-`def handle_call(:status, _from, %{workers: workers, monitors: monitors} = state) do`
-`{:reply, {state_name(state), length(workers), :ets.info(monitors, :size)}, state}`
-`end`
-
-`#####################`
-`# Private Functions #`
-`#####################`
-
-`defp state_name(%State{overflow: overflow, max_overflow: max_overflow, workers: workers}) when overflow < 1 do`
-`case length(workers) == 0 do`
-`true ->`
-`if max_overflow < 1 do`
-`:full`
-`else`
-`:overflow`
-`end`
-`false ->`
-`:ready`
-`end`
-`end`
-
-`defp state_name(%State{overflow: max_overflow, max_overflow: max_overflow}) do`
-`:full`
-`end`
-
-`defp state_name(_state) do`
-`:overflow`
-`end`
-`end`
-7.2.5        Queuing Worker Processes
-
-
-For the last bit of
-`Pooly`, we are going to handle the case where consumers are willing to wait for a worker to be available. In other words, the consumer process is willing to block until the worker pool frees up a worker.
-
-
-For this to work, we need to queue up worker processes, and match a newly freed worker process with a waiting consumer process.
-
-
-A Blocking Consumer
-
-
-A consumer must tell
-`Pooly`
-if it is willing to block. We can do this by simply extending the API for
-`checkout`
-in
-`lib/pooly.ex`:
-
-`defmodule Pooly do`
-`@timeout 5000`
-
-`#######`
-`# API #`
-`#######`
-
-`def checkout(pool_name, block \\ true, timeout \\ @timeout) do`
-`Pooly.Server.checkout(pool_name, block, timeout)`
-`end`
-`end`
-In this new version of
-`checkout`, we add two extra parameters,
-`block`
-and
-`timeout`. Head over now to
-`lib/pooly/server.ex`, where we will update the
-`checkout`
-function accordingly:
-
-`defmodule Pooly.Server do`
-
-`#######`
-`# API #`
-`#######`
-
-`def checkout(pool_name, block, timeout) do`
-`Pooly.PoolServer.checkout(pool_name, block, timeout)`
-`end`
-`end`
-Now, to the real meat of the implementation,
-`lib/pooly/pooly_server.ex`:
-
-
-Listing 7.21 lib/pooly/pool\_server.ex – Setting up Pool Server to use queue for waiting consumers
-
-`defmodule Pooly.PoolServer do`
-
-`defmodule State do`
-`defstruct pool_sup: nil, …, waiting: nil, …, max_overflow: nil #1`
-`end`
-
-`#############`
-`# Callbacks #`
-`############j`
-
-`def init([pool_sup, pool_config]) when is_pid(pool_sup) do`
-`Process.flag(:trap_exit, true)`
-`monitors = :ets.new(:monitors, [:private])`
-`waiting  = :queue.new                              #1`
-`state    = %State{pool_sup: pool_sup, monitors: monitors, waiting: waiting, overflow: 0}                                  #1`
-
-`init(pool_config, state)`
-`end`
-
-`#######`
-`# API #`
-`#######`
-
-`def checkout(pool_name, block, timeout) do`
-`GenServer.call(name(pool_name), {:checkout, block}, timeout) #2`
-`end`
-`end`
-#1 Update the state to store the queue of waiting consumers
-
-
-#2 Add block and timeout callback for checkout.
-
-
-First, update the state with a
-`waiting`
-field. That will store the *queue* of consumers. While Elixir doesn’t come with a queue data structure, it doesn’t need to! Erlang comes with queue implementation. There’s a bigger lesson to this. Whenever you find something that may be missing in Elixir, instead of reaching for a third-party library[[1]](#uwSRyDKLGjMmgjcGYhoZfmG), try finding out if Erlang has the functionality you need. This highlights the wonderful interoperability between Erlang and Elixir.
-
-
-7.2.6        Slight Detour: Queues in Erlang
-
-
-The queue implementation that Erlang provides is very interesting. I will let the examples do the talking. We only look at the basics of using a queue, namely creating a queue, adding and removing items from a queue. In a fresh
-`iex`
-session, create a queue:
-
-`iex(1)> q = :queue.new`
-`{[], []}`
-Notice that the return value is a tuple of two elements. Lists, to be more precise. Why two? To answer that question, add a couple of items into the queue:
-
-`iex(2)> q = :queue.in(“uno”, q)`
-`{[“uno”], []}`
-
-`iex(3)> q = :queue.in(“dos”, q)`
-`{[“dos”], [“uno”]}`
-
-`iex(4)> q = :queue.in(“tres”, q)``{[“tres”, “dos”], [“uno”]}`
-The first element (i.e. the head of the queue) is the *second* element of the tuple, while the remaining of the queue is represented by the *first* element. Now, try removing an element from the queue:
-
-`iex(5)> :queue.out(q)`
-`{{:value, “uno”}, {[“tres”], [“dos”]}}`
-This is an interesting looking tuple. Let’s break it down a little.
+```elixir
+iex(5)> :queue.out(q)
+{{:value, “uno”}, {[“tres”], [“dos”]}}
+```
+这是一个有趣的元组。让我们稍微分解一下。
 
 `{{:value, “uno”}, …}`
-This tagged tuple (with
-`:value`) contains the value of the first element of the queue. Now for the other part:
+这个带有 `:value` 标签的元组包含队列第一个元素的值。现在是另一部分：
 
 `{…, {[“tres”], [“dos”]}}`
-This tuple is the new queue, after the first element has been removed. The representation of the new queue is the same as the one we saw earlier, with the first element being the second element of the tuple, while the remaining part of the queue in the first element.
+这个元组是移除第一个元素后的新队列。新队列的表示与我们之前看到的相同，其中第一个元素是元组的第二个元素，而队列的其余部分在第一个元素中。
 
+是的，我知道这有点混乱，但请坚持。因为记住，在 Elixir/Erlang 世界中，数据结构是不可变的。此外，这对于模式匹配来说是一个完美的情况：
 
-Yes, I know it’s slightly confusing, but hang in there. Arranging the result this way makes sense because remember, data structures are immutable in Elixir/Erlang land. Also, this is a perfect case for pattern matching:
+```elixir
+iex(6)> {{:value, head}, q} = :queue.out(q)
+{{:value, “uno”}, {[“tres”], [“dos”]}}
 
-`iex(6)> {{:value, head}, q} = :queue.out(q)`
-`{{:value, “uno”}, {[“tres”], [“dos”]}}`
+iex(7)> {{:value, head}, q} = :queue.out(q)
+{{:value, “dos”}, {[], [“tres”]}}
 
-`iex(7)> {{:value, head}, q} = :queue.out(q)`
-`{{:value, “dos”}, {[], [“tres”]}}`
+iex(8)> {{:value, head}, q} = :queue.out(q)
+{{:value, “tres”}, {[], []}}
+```
+如果我们尝试从一个空队列中取出某物会发生什么？
 
-`iex(8)> {{:value, head}, q} = :queue.out(q)``{{:value, “tres”}, {[], []}}`
-What happens when we try to get something out of an empty queue?
+```elixir
+iex(9)> {{:value, head}, q} = :queue.out(q)
+** (MatchError) no match of right hand side value: {:empty, {[], []}}
+```
+哎呀！对于一个空队列，返回值是一个包含 `:empty` 作为第一个元素的元组。这就结束了关于使用队列的简短间歇，你需要理解接下来的例子。
 
-`iex(9)> {{:value, head}, q} = :queue.out(q)`
-`** (MatchError) no match of right hand side value: {:empty, {[], []}}`
-Whoops! For an empty queue, the return value is a tuple that contains
-`:empty`
-as the first element. This concludes the brief detour on using the queue, and all that you need to understand the examples that follow.
 
-
-7.2.7        Back to Queuing Worker Processes
-
-
-Next, we add
-`block`
-and
-`timeout`
-to the invocation of the callback function. However, what’s that
-`make_ref`
-doing there in #2? In order to answer that question, we need to look at the updated implementation of the callback:
-
-
-Listing 7.22 lib/pooly/pool\_server.ex – Handling waiting consumers
-
-`defmodule Pooly.PoolServer do`
-
-`#############`
-`# Callbacks #`
-`#############`
-
-`def handle_call({:checkout, block}, {from_pid, _ref} = from, state) do`
-`%{worker_sup:   worker_sup,`
-`workers:      workers,`
-`monitors:     monitors,`
-`waiting:      waiting,`
-`overflow:     overflow,`
-`max_overflow: max_overflow} = state # 1`
-
-`case workers do`
-`[worker|rest] ->`
-`# …`
-
-`[] when max_overflow > 0 and overflow < max_overflow ->`
-`# …`
-
-`[] when block == true ->                                #2`
-`ref = Process.monitor(from_pid)`
-`waiting = :queue.in({from, ref}, waiting)             #2`
-`{:noreply, %{state | waiting: waiting}, :infinity}`
-
-`[] ->`
-`{:reply, :full, state};`
-`end`
-`end`
-`end`
-#1 Update state with waiting
-
-
-#2 Add waiting consumer into the queue.
-
-
-There are two things we’ve added:
-
-
-·     
-`waiting`
-to the state
-
-
-·      Handling the case when consumer is willing to block
-
-
-Let’s deal with the case when we are overflowed, and there is a request for a worker where the consumer is willing to wait. This case is covered in #3.
-
-
-Handling a Consumer that is Willing to Block
-
-
-When a consumer is willing to block, we will first monitor it. That’s because if it crashes for some reason, we must know about it, and remove it from the queue.
-
-
-Next, we add to the
-`waiting`
-queue a tuple of the form
-`{from, ref}`.
-`from`
-is the same
-`from`
-of the callback. Note that
-`from`
-is in fact a *tuple*, containing a tuple of the consumer pid and a tag, itself a reference.
-
-
-Finally, note that the reply is in fact a
-`:noreply`, with
-`:infinity`
-as the timeout. Returning
-`:noreply`
-means that
-`GenServer.reply(from_pid, message)`
-must be called from *somewhere* else. Since we do not know how long we must wait, we pass in
-`:infinity`.
-
-
-*Where* do we need to call
-`GenServer.reply/2`? In other words, when we need to reply the consumer process? During a check-in of a worker! Time to update
-`handle_checkin/2`. This time, we will use the
-`waiting`
-queue and pattern matching:
-
-
-Listing 7.23 lib/pooly/pool\_server.ex – Handling a consumer check in that is willing to block
-
-`defmodule Pooly.PoolServer do`
-
-`#####################`
-`# Private Functions #`
-`#####################`
-
-`def handle_checkin(pid, state) do`
-`%{worker_sup:   worker_sup,`
-`workers:      workers,`
-`monitors:     monitors,`
-`waiting:      waiting,`
-`overflow:     overflow} = state`
-
-`case :queue.out(waiting) do`
-`{{:value, {from, ref}}, left} ->`
-`true = :ets.insert(monitors, {pid, ref})`
-`GenServer.reply(from, pid)                   #1`
-`%{state | waiting: left}`
-
-`{:empty, empty} when overflow > 0 ->`
-`:ok = dismiss_worker(worker_sup, pid)`
-`%{state | waiting: empty, overflow: overflow-1}`
-
-`{:empty, empty} ->`
-`%{state | waiting: empty, workers: [pid|workers], overflow: 0}`
-`end`
-`end``end`
-#1 Replying to the consumer process when a worker is available
-
-
-Depending on the output of the queue, we have three cases that we have to handle. The first case is when the queue is not empty. This means that we have at least one consumer process waiting for a worker. We insert a three-element tuple into the
-`monitors`
-ETS table. Now, we can finally tell the consumer process that we have an available worker by doing
-`GenServer.reply/2`.
-
-
-The second case is when there are no consumers currently waiting, and yet we are in an overflow state. This means that we just have to decrement the
-`overflow`
-count by 1.
-
-
-The last case to handle is when there are no consumers currently waiting, and we are *not* in an overflow state. For this, we can just add back the worker back into the
-`workers`
-field.
-
-
-Getting a Worker from Worker Exits
-
-
-There is another way that a waiting consumer can get a worker, and that is if some other worker process exits. The modification is simple. Head to
-`handle_worker_exit/2`
-and modify
-`handle_worker_exit/2`:
-
-
-Listing 7.24 lib/pooly/pool\_server.ex – Handling worker exits
-
-`defmodule Pooly.PoolServer do`
-
-`#####################`
-`# Private Functions #`
-`#####################`
-
-`defp handle_worker_exit(pid, state) do`
-`%{worker_sup:   worker_sup,`
-`workers:      workers,`
-`monitors:     monitors,`
-`waiting:      waiting,`
-`overflow:     overflow} = state`
-
-`case :queue.out(waiting) do`
-`{{:value, {from, ref}}, left} ->`
-`new_worker = new_worker(worker_sup)`
-`true = :ets.insert(monitors, {new_worker, ref})`
-`GenServer.reply(from, new_worker)`
-`%{state | waiting: left}`
-
-`{:empty, empty} when overflow > 0 ->`
-`%{state | overflow: overflow-1, waiting: empty}`
-
-`{:empty, empty} ->`
-`workers = [new_worker(worker_sup) | workers]`
-`%{state | workers: workers, waiting: empty}`
-`end`
-`end``end`
-Similar to
-`handle_checkin/2`, we use pattern matching from the result of
-`:queue.out/1`. The first case is when we have a waiting consumer process. Since a worker has crashed or exited, we simply create a new one, and hand it to the consumer process. The rest of the cases are pretty self-explanatory.
-
-
-7.2.8        Taking it for a spin
-
-
-Now to see reap the fruits of our labor. Configure the pool like so:
-
-`defmodule Pooly do`
-
-`def start(_type, _args) do`
-`pools_config =`
-`[`
-`[name: “Pool1”,`
-`mfa: {SampleWorker, :start_link, []},`
-`size: 2,`
-`max_overflow: 1`
-`],`
-`[name: “Pool2”,`
-`mfa: {SampleWorker, :start_link, []},`
-`size: 3,`
-`max_overflow: 0`
-`],`
-`[name: “Pool3”,`
-`mfa: {SampleWorker, :start_link, []},`
-`size: 4,`
-`max_overflow: 0`
-`]`
-`]`
-
-`start_pools(pools_config)`
-`end``end`
-Here, only Pool 1 has overflow configured. Open a new
-`iex`
-session:
-
-`% iex –S mix`
-`iex(1)> w1 = Pooly.checkout(“Pool1”)`
-`#PID<0.97.0>`
-
-`iex(2)> w2 = Pooly.checkout(“Pool1”)`
-`#PID<0.96.0>`
-
-`iex(3)> w3 = Pooly.checkout(“Pool1”)``#PID<0.111.0>`
-With max overflow set to 1, the pool can handle one extra worker. What happens when you try to check out another worker? The client will be blocked indefinitely or timeout, depending on how you try to check out the worker. For example, doing this will block indefinitely:
-
-`iex(4)> Pooly.checkout(“Pool1”, true, :infinity)`
-On the other hand, doing this will time out after five seconds:
-
-`iex(4)> Pooly.checkout(“Pool1”, true, 5000)`
-If you are following along the example, you will realize that the session is blocked. Before we continue, open up
-`lib/pooly/sample_worker.ex`. Add the
-`work_for/2`
-function and its corresponding callback:
-
-
-Listing 7.25 lib/pooly/sample\_worker.ex – Enable SampleWorker to simulate processing for a given period of time
-
-`defmodule SampleWorker do`
-`use GenServer`
-
-`# …`
-
-`def work_for(pid, duration) do`
-`GenServer.cast(pid, {:work_for, duration})`
-`end`
-
-`def handle_cast({:work_for, duration}, state) do`
-`:timer.sleep(duration)`
-`{:stop, :normal, state}`
-`end`
-`end`
-This function tells the worker to sleep for some time then exits normally. This is to simulate a short-lived worker. Restart the session as per the above steps. In other words, check out three workers:
-
-`iex(1)> w1 = Pooly.checkout(“Pool1”)`
-`#PID<0.97.0>`
-
-`iex(2)> w2 = Pooly.checkout(“Pool1”)`
-`#PID<0.96.0>`
-
-`iex(3)> w3 = Pooly.checkout(“Pool1”)``#PID<0.111.0>`
-This time, we tell the first worker to work for ten seconds.
-
-`iex(4)> SampleWorker.work_for(w1, 10_000)`
-`:ok`
-Now try to checkout a worker. Since we have exceeded the maximum overflow, the pool will cause the client to block.
-
-`iex(5)> Pooly.checkout(“Pool1”, true, :infinity)`
-Ten seconds later, the console prints out a pid:
-
-`#PID<0.114.0>`
-Success! Even though we were in an overflowed state, once the first worker has completed it job, another slot became available and was handled over to the waiting client.
 
 
 7.3           Exercises
