@@ -1,56 +1,42 @@
-# 9   Distribution and Fault Tolerance
+# 9 分布式和容错性
 
+本章内容包括：
 
-This chapter covers:
+- 实现分布式和容错性应用程序
+- Cookies和安全
+- 在局域网(LAN)中连接节点
 
+在上一章中，我们了解了Elixir中分布式的基础知识。特别是，我们现在知道如何建立一个集群。我们还研究了*任务（Tasks）*，这是一种抽象，它可以让我们轻松编写短暂的计算。
 
-·      Implementing a distributed and fault-tolerant application
+接下来我们要探索的概念是分布式环境下的容错性。为此，我们将构建一个应用程序，演示当一个节点宕机时，如何由另一个节点自动接管其工作。更进一步，该应用程序还将演示当一个优先级更高的之前宕机的节点重新加入集群时，如何让当前的节点让出控制权。换句话说，我们将构建一个展示分布式Elixir的*故障转移（failover）*和*接管（takeover）*能力的应用程序。
 
+9.1 分布式容错性
 
-·      Cookies and Security
+故障转移发生在运行应用程序的节点宕机时，该应用程序会在另一个节点上自动重启，给定一定的超时期限。接管发生在一个节点的优先级（在列表中定义）高于当前运行节点时，导致优先级较低的节点停止，并在优先级更高的节点上重启应用程序。在编程中，至少当你看到故障转移和接管实际发生时，它们非常酷。
 
+Chucky Chuck Norris 事实应用程序概述
 
-·      Connecting to nodes in a Local Area Network (LAN)
-
-
-In the previous chapter, we looked at the basics of distribution in Elixir. In particular, we now know how to set up a cluster. We also looked at *Tasks*, which are an abstraction over GenServers that make it easy to write short-lived computations.
-
-
-The next concept that we are going to explore is fault tolerance with respect to distribution. For this, we will be building an application that will demonstrate how a cluster handles failures by having another node automatically stepping up to take the place of a downed node. To take things further, it will also demonstrate how a node yields control when a previously downed node of higher priority rejoins the cluster. In other words, we will build an application that demonstrates the *failover* and *takeover* capabilities of distributed Elixir.
-
-
-9.1           Distribution for Fault Tolerance
-
-
-Failover happens when a node running an application goes down, and that application is being restarted on another node automatically, given some time-out period. Takeover happens when a node has a higher priority (defined in a list) than the currently running node, causing the lower priority node to stop and the application be restarted in the higher priority node. Failovers and takeovers are very cool (in programming, at least) when you see them in action.
-
-
-An Overview of Chucky the Chuck Norris Facts Application
-
-
-The application we are going to build is going to be deliberately simple, since the main objective is to learn how to wire up your OTP application to be fault-tolerant using failovers and takeovers. We will build *Chucky*, a distributed and fault-tolerant Chuck Norris "facts" application. This is an example run of Chucky:
+我们要构建的应用程序将会故意保持简单，因为主要目标是学习如何将您的OTP应用程序连接起来，使其具有容错性，使用故障转移和接管。我们将构建*Chucky*，一个分布式且具有容错性的Chuck Norris“事实”应用程序。这是Chucky的一个示例运行：
 
 `iex(1)> Chucky.fact`
-`"Chuck Norris’s keyboard doesn’t have a Ctrl key because nothing controls Chuck Norris."`
+`"Chuck Norris的键盘没有Ctrl键，因为没有什么能控制Chuck Norris。"`
 
-`iex(2)> Chucky.fact``"All arrays Chuck Norris declares are of infinite size, because Chuck Norris knows no bounds."`
-9.2           Building Chucky
+`iex(2)> Chucky.fact`
+`"Chuck Norris声明的所有数组都是无限大小的，因为Chuck Norris不受限制。"`
+9.2 构建Chucky
 
+Chucky是一个简单的OTP应用程序。应用程序的核心在于一个GenServer。我们将首先构建它，然后实现Application行为。最后，我们将亲自看到如何将所有内容连接起来，以利用故障转移和接管。
 
-Chucky is a simple OTP application. The meat of the application lies in a GenServer. We will first build that, followed by implementing the Application behavior. Finally, we will see for ourselves how to hook everything up to make use of failover and takeover.
+9.2.1 实现服务器
 
-
-9.2.1        Implementing the Server
-
-
-You know the drill:
+您知道该怎么做：
 
 `% mix new chucky`
-Next, create
-`lib/server.ex`:
+接下来，创建
+`lib/server.ex`：
 
 
-Listing 9.1 Implementing the main Chucky server (lib/server.ex)
+清单 9.1 实现主Chucky服务器（lib/server.ex）
 
 `defmodule Chucky.Server do`
 `use GenServer`
@@ -64,7 +50,7 @@ Listing 9.1 Implementing the main Chucky server (lib/server.ex)
 `end`
 
 `def fact do`
-`GenServer.call({:global, __MODULE__}, :fact)                        #2`
+`GenServer.call({:global, __MODULE__}, :fact)                        #2`
 `end`
 
 `#############`
@@ -88,706 +74,533 @@ Listing 9.1 Implementing the main Chucky server (lib/server.ex)
 `{:reply, random_fact, facts}`
 `end`
 `end`
-#1 Globally register the GenServer within the cluster
+#1 在集群内全局注册GenServer
 
+#2 对全局注册的GenServer进行调用（和casts）需要额外的 :global
 
-#2 Calls (and casts) to a globally registered GenServer have an extra :global
+这里的大部分代码应该不难理解，尽管在
+`
 
-
-Most of the code here should not be too hard to understand, although the usage of
-`:global`
-in
-`Chucky.Server.start_link/0`
-and
+Chucky.Server.start_link/0`
+和
 `Chucky.Server.fact/1`
-is new. In
-`Chucky.Server.start_link/0`, we register the name of the module using
-`{:global, __MODULE__}`. This has the effect of registering
+中使用的
+`:global`
+是新的。在
+`Chucky.Server.start_link/0`，我们使用
+`{:global, __MODULE__}`注册了模块的名称。这样做的效果是将
 `Chucky.Server`
-onto the
+注册到
 `global_name_server`
-process. This process is started each time a node starts. This means that there isn't single "special" node that keeps track of the name tables. Instead, each node will have a replica of the name tables.
+进程上。每次节点启动时，都会启动此进程。这意味着没有单个“特殊”的节点来跟踪名称表。相反，每个节点都将有名称表的副本。
 
-
-Since we have globally registered this module, calls (and casts) also have to be prefixed with
-`:global`. Therefore, instead of writing
+由于我们已经全局注册了此模块，调用（和casts）也必须以
+`:global`为前缀。因此，我们不是写
 
 `def fact do`
 `GenServer.call(__MODULE__, :fact)``end`
-We do:
-
-
- 
+我们这样做：
 
 `def fact do`
 `GenServer.call({:global, __MODULE__}, :fact)``end`
-The
 `init/1`
-callback reads a file called
-`facts.txt`, splits it up based on newlines, and initializes the state of
+回调读取一个名为
+`facts.txt`的文件，基于换行符将其分割，并将
 `Chucky.Server`
-to be the list of "facts". Store
+的状态初始化为“事实”的列表。将
 `facts.txt`
-in the project root directory. You can grab a copy of the file from the project's GitHub repository.
+存储在项目根目录中。您可以从项目的GitHub仓库获取文件副本。
 
-
-The
 `handle_call/3`
-callback simply picks a random entry from its state (the list of "facts”), and returns it.
+回调简单地从其状态（“事实”的列表）中随机选择一个条目，并返回它。
 
+9.2.2 实现应用程序行为
 
-9.2.2        Implementing the Application Behavior
-
-
-Next, we will implement the Application behavior that will serve as the entry point to the application. In addition, instead of creating an explicit supervisor, we can create one from within
-`Chucky.start/2`. This is done by importing
+接下来，我们将实现作为应用程序入口点的应用程序行为。此外，我们可以从
+`Chucky.start/2`中创建一个显式的监督器。这是通过导入
 `Supervisor.Spec`
-that exposes the
+来完成的，它暴露了
 `worker/2`
-function (which creates the child specification) that we can pass into the
+函数（创建子规范），我们可以将其传递给
 `Supervisor.start_link`
-function at the end of
-`start/2`. Create
-`lib/chucky.ex`:
+函数，以结束
+`start/2`。创建
+`lib/chucky.ex`：
 
 
-Listing 9.2 Implementing the Application behavior (lib/chucky.ex)
+清单 9.2 实现应用程序行为（lib/chucky.ex）
+```elixir
+defmodule Chucky do
+use Application
+require Logger
 
-`defmodule Chucky do`
-`use Application`
-`require Logger`
+def start(type, _args) do
+import Supervisor.Spec
+children = [
+worker(Chucky.Server, [])
+]
 
-`def start(type, _args) do`
-`import Supervisor.Spec`
-`children = [`
-`worker(Chucky.Server, [])`
-`]`
+case type do
+:normal ->
+Logger.info("Application is started on #{node}")
 
-`case type do`
-`:normal ->`
-`Logger.info("Application is started on #{node}")`
+{:takeover, old_node} ->
+Logger.info("#{node} is taking over #{old_node}")
 
-`{:takeover, old_node} ->`
-`Logger.info("#{node} is taking over #{old_node}")`
+{:failover, old_node} ->
+Logger.info("#{old_node} is failing over to #{node}")
+end
 
-`{:failover, old_node} ->`
-`Logger.info("#{old_node} is failing over to #{node}")`
-`end`
+opts = [strategy: :one_for_one, name: {:global, Chucky.Supervisor}]
+Supervisor.start_link(children, opts)
+end
 
-`opts = [strategy: :one_for_one, name: {:global, Chucky.Supervisor}]`
-`Supervisor.start_link(children, opts)`
-`end`
+def fact do
+Chucky.Server.fact
+end
+end
+```
 
-`def fact do`
-`Chucky.Server.fact`
-`end`
-`end`
-This is a simple supervisor that supervises
-`Chucky.Server`. Just like
-`Chucky.Server`,
+这是一个简单的监督器，监督
+`Chucky.Server`。就像
+`Chucky.Server`一样，
 `Chucky.Supervisor`
-is also globally registered, and therefore is registered with
-`:global`.
+也是全局注册的，因此使用
+`:global`注册。
 
+9.2.3 应用类型参数
 
-9.2.3        Application type arguments
+请注意，我们在此使用了 `start/2` 的 `type` 参数，这是我们通常会忽略的。对于非分布式应用程序，`type` 的值通常是 `:normal`。但当我们开始处理 takeover（接管）和 failover（故障转移）时，情况就变得有趣了。
 
+如果您查阅 Erlang 文档中 `type` 参数所期望的数据类型，您将看到这样的内容：
 
-Notice that we are using the
-`type`
-argument of
-`start/2`, which we usually ignore. For non-distributed applications, the value of
-`type`
-is usually
-`:normal`. It is when we start playing with takeover and failover when things start to get a little interesting.
+![Erlang 文档中 `type` 参数的数据类型说明](../images//9_0.png)
 
+这正是我们在上述代码中匹配的三种情况。当应用程序以分布式模式启动时，对于 `{:takeover, node}` 和 `{:failover, node}` 的模式匹配将成功。
 
-If you look up the Erlang documentation on the data types that
-`type`
-expects, you will see this:
+不详细介绍（下一节将详述），当一个节点因为要接管另一个节点（因为它具有更高优先级）而启动时，`{:takeover, node}` 中的 `node` 就是被接管的节点。
 
+类似地，当一个节点因为另一个节点死亡而启动时，`{:failover, node}` 中的 `node` 就是死亡的那个节点。到目前为止，我们还没有编写任何特定于故障转移或接管的代码。我们接下来将处理这个。
 
-![](../images//9_0.png)  
+9.3 Chucky 中故障转移和接管概述
 
+在进入具体细节之前，让我们谈谈集群的 *行为*。在这个例子中，我们将配置一个由三个节点组成的集群。为了方便参考，以及大多是因为作者缺乏想象力，我们将节点命名为 `a@<host>`、`b@<host>` 和 `c@<host>`，其中 `<host>` 是您的主机名。本节剩余部分，我将仅用 `a`、`b` 和 `c` 来指代所有节点。
 
+节点 `a` 将是主节点，而 `b` 和 `c` 将是从节点。在接下来的图表中，带有绿色环的节点是主节点。其余的是从节点。
 
-This are exactly the three cases that we pattern match for in the above code listing. The pattern match succeeds for the
-`{:takeover, node}`
-and
-`{:failover, node}`
-if the application is started in distribution-mode.
+节点启动的 *顺序* 很重要。在这种情况下，`a` 首先启动，其次是 `b` 和 `c`。当所有节点都启动后，集群就完全初始化了。换句话说，只有 `a`、`b` 和 `c` 初始化后，集群才会变得可用。
 
+所有三个节点都已编译 Chucky（这是一个重要的细节）。然而，当集群启动时，只有 *一个* 应用程序启动，它在主节点上启动（惊喜！）。这意味着，虽然请求可以从集群中的任何节点发出，但只有主节点会回应该请求：
 
-Without going into too much detail (that happens in the next section), when a node gets started because it is taking over another node (because it has higher priority), then
-`node`
-in
-`{:takeover, node}`
-is the node being taken over.
+![所有请求都由 a@host 处理，无论哪个节点接收到请求](../images//9_1.png)
 
+图 9.1 所有请求都由 a@host 处理，无论哪个节点接收到请求
 
-In a similar vein, when a node gets started because another node dies, then
-`node`
-`{:failover, node}`
-is the node that died. Up till now, we haven't done any failover or takeover specific code yet. We tackle that next.
+现在让情况变得有趣。当 `a` 失败时，其余节点将在一段时间后检测到 `a` 已失败。然后它将在其中一个从节点上启动应用程序。在这种情况下，是 `b`：
 
+![假设 a@host 失败。在 5 秒内，一个故障转移节点将接管（见下图）](../images//9_2.png)
 
-9.3           An Overview of Failover and Takeover in Chucky
+图 9.2 假设 a@host 失败。在 5 秒内，一个故障转移节点将接管（见下图）
 
+![b@host 在检测到 a@host 失败后自动接管](../images//9_3.png)
 
-Before we go into the specifics, let's talk about the *behavior* of the cluster. In this example, we will configure a cluster of three nodes. For ease of reference, and mostly due to a lack of imagination on the author's part, we will name the nodes
-`a@<host>`,
-`b@<host>`
-and
-`c@< host>`, where
-`<host>`
- is your hostname. I will refer to all the nodes by
-`a`,
-`b`
-and
-`c`
-for the remaining of this section.
+图 9.3 b@host 在检
 
+测到 a@host 失败后自动接管
 
-Node
-`a`
-will be the master node, while
-`b`
-and
-`c`
-will be the slave nodes. In the figures that follow, the node with a green ring is the master node. The remaining ones are the slave nodes.
+如果 `b` 失败了呢？那么 `c` 就是下一个启动应用程序的节点。到目前为止，我们介绍的都是故障转移情况。
 
+现在，考虑一些更有趣的事情。当 `a` 重启时会发生什么？由于 `a` 是主节点，它在其余节点中具有 *最高优先级*。因此，它将发起 *接管*：
 
-The *order* in which the nodes are started matters. In this case,
-`a`
-starts first, followed by
-`b`
-and
-`c`. The cluster is fully initialized when all the nodes have started. In other words, only
-`a`,
-`b`
-and
-`c`
-are initialized, the cluster will then be usable.
+![一旦 a@host 回来，它将发起接管](../images//9_4.png)
 
+图 9.4 一旦 a@host 回来，它将发起接管
 
-All three nodes have Chucky *compiled* (this is an important detail). However, when the cluster starts, only *one* application is started, and it is started on the master node (surprise!). This means that while the requests can be made from any node in the cluster, only the master node serves back that request:
+无论哪个从节点正在运行应用程序，它都将退出，并将控制权让给主节点。这有多棒？现在，我们可以看到如何在 Chucky 中实现故障转移和接管策略。
 
+### 9.3.1        故障转移和接管配置
 
-![](../images//9_1.png)  
+在本节中，我们将看到为您的分布式应用程序配置故障转移和接管所需的步骤。
 
+步骤1：确定机器的主机名
 
-
-Figure 9.1 All requests are handled by a@host, no matter which node receives the request
-
-
-Now let's make things interesting. When
-`a`
-fails, the remaining nodes will, after some time detect that
-`a`
-has failed. It will then spin up the application on one of the slave nodes. In this case,
-`b`:
-
-
-![](../images//9_2.png)  
-
-
-
-Figure 9.2 Assuming a@host fails. Within 5 seconds, a failover node will take over (See next figure)
-
-
-![](../images//9_3.png)  
-
-
-
-Figure 9.3 b@host takes over automatically once it has been detected that a@host has failed
-
-
-What if
-`b`
-fails? Then
-`c`
-is next in line to spin up the application. So far, what we have covered are failover situations.
-
-
-Now, consider something more interesting. What happens when
-`a`
-restarts? Since
-`a`
-is the master node, it has the *highest priority* amongst the rest of the nodes. Therefore, it will initiate a *takeover*:
-
-
-![](../images//9_4.png)  
-
-
-
-Figure 9. 4 Once a@host is back, it will initiate a takeover
-
-
-Whichever slave node is running the application will exit, and yield control to the master node. How awesome is that? Now, we can see how we can implement failover and takeover strategies in Chucky.
-
-
-9.3.1        Configuring Failover and Takeover
-
-
-In this section, we will see the steps needed to configure your distributed application for failover and takeover.
-
-
-Step 1: Determine the hostname(s) of the machine(s)
-
-
-The first step is to find out the hostname of the machine(s) that you are going to be on. For example, on my Mac OSX:
+第一步是找出您要使用的机器的主机名。例如，在我的Mac OSX上：
 
 `% hostname –s`
 `manticore`
-Step 2: Create configuration files for each of the nodes
+步骤2：为每个节点创建配置文件
 
-
-The second step would be to create configuration files for each of your nodes. To keep it simple, create these three files in the
+第二步是为每个节点创建配置文件。为了简单起见，在
 `config`
-directory:
-
+目录中创建这三个文件：
 
 `·`
 `a.config`
 
-
 `·`
 `b.config`
-
 
 `·`
 `c.config`
 
+注意它们被命名为
+`<节点名称>.config`。虽然您可以自由命名任何文件名，但我建议您坚持使用此约定，因为每个文件将包含节点特定的配置细节。
 
-Notice that they are named
-`<name-of-node>.config`. While you are free to give it any file name you like, I suggest you stick to this convention since each file will contain node-specific configuration details.
+步骤3：填写每个节点的配置文件
 
+每个节点的配置文件结构看起来有点复杂，但我们稍后会更仔细地检查一下。现在，在
+`config/a.config`中输入这个：
 
-Step 3: Filling up the configuration files for each of the nodes
-
-
-The configuration file for each node looks slightly complicated in structure, but we will examine it a little more closely in a moment. For now, enter this in
-`config/a.config`:
-
-
-Listing 9. 3 The configuration for a@host (config/a.config)
+列表9.3 a@host的配置 (config/a.config)
 
 `[{kernel,`
 `[{distributed, [{chucky, 5000, [a@manticore, {b@manticore, c@manticore}]}]},`
 `{sync_nodes_mandatory, [b@manticore, c@manticore]},`
 `{sync_nodes_timeout, 30000}``]}].`
-This represents the configuration needed to configure failover/takeover for a single node. Let's break it down. We start with the most complicated part, the
+这代表配置单个节点的故障转移/接管所需的配置。让我们分解一下。我们从最复杂的部分开始，
 `distributed`
-configuration parameter:
+配置参数：
 
 `[{distributed, [{chucky, 5000, [a@manticore, {b@manticore, c@manticore}]}]}]`
 `chucky`
-is of course the application name.
+当然是应用程序名称。
 `5000`
-represents the timeout in milliseconds before the node is considered down the application is restarted in the next highest priority node.
-
+代表节点被认为宕机之前的超时毫秒数，应用程序在下一个最高优先级的节点中重启。
 
 `[a@manticore, {b@manticore, c@manticore}]`
-lists the nodes in priority. In this case,
+列出了优先级顺序的节点。在这个例子中，
 `a`
-is first in line, followed by *either*
+是首位，其次是
 `b`
-or
-`c`. Nodes defined in a tuple do not have a priority amongst themselves. For example, consider the following entry:
+或
+`c`。在元组中定义的节点之间没有优先级。例如，考虑以下条目：
 
 `[a@manticore, {b@manticore, c@manticore}, d@manticore]`
-In this case, the highest priority is
-`a`, then
-`b/c`, followed by
-`d`.
-
+在这种情况下，最高优先级是
+`a`，然后是
+`b/c`，接着是
+`d`。
 
 ·     
-`sync_nodes_mandatory`: The list of nodes that *must* be started within the time specified by
+`sync_nodes_mandatory`：*必须*在
 `sync_nodes_timeout`
-
-
-·     
-`sync_nodes_optional`: The list of nodes that *can* be started within the time specified by
-`sync_nodes_timeout`. (Note that we are not using this option for this application)
-
+指定的时间内启动的节点列表
 
 ·     
-`sync_nodes_timeout`: How long to wait for the other nodes to start (in milliseconds)
-
-
-What's the difference of
-`sync_nodes_mandatory`
-and
-`sync_nodes_optional`? As its name suggests, the node being started will wait for all the nodes in
-`sync_nodes_mandatory`
-to start up, within the timeout limit set by
-`sync_nodes_timeout`. If even one fails to start, the node terminates itself. The case is not so strict for
-`sync_nodes_optional`. The node will just wait till the timeout elapses, and will *not* terminate itself if any node is not up.
-
-
-Configuring the Slave Nodes
-
-
-For the remaining nodes, the configuration is *almost* the same, except for the
-`sync_nodes_mandatory`
-entry. In fact, it is *very* important that the rest of the configuration is unchanged. For example, having an inconsistent
+`sync_nodes_optional`：*可以*在
 `sync_nodes_timeout`
-value would lead to undetermined behavior of the cluster.
+指定的时间内启动的节点列表。（注意，我们没有在这个应用程序中使用此选项）
 
+·     
+`sync_nodes_timeout`：等待其他节点启动的时间（以毫秒为单位）
 
-Here's the configuration for
-`b`:
+`sync_nodes_mandatory`
+和
+`sync_nodes_optional`
+的区别是什么？顾名思义，正在启动的节点将在
+`sync_nodes_timeout`
+设置的超时限制内等待所有
+`sync_nodes_mandatory`
+中的节点启动。如果有一个未能启动，则节点会终止自身。对于
+`sync_nodes_optional`
+则不是那么严格。节点只是等待直到超时过去，并且如果任何节点没有启动，*不会*自我终止。
 
+配置从节点
 
-Listing 9.4 The configuration for b@host (config/b.config)
+对于剩下的节点，配置*几乎*相同，除了
+`sync_nodes_mandatory`
+条目。事实上，保持其余配置不变是*非常*重要的。例如，有不一致的
+`sync_nodes_timeout`
+值会导致群集的不确定行为。
+
+这是
+`b`的配置：
+
+列表9.4 b@host的配置 (config/b.config)
 
 `[{kernel,`
 `[{distributed,`
 `[{chucky,`
 `5000,`
-`[a@manticore, {b@manticore, c@manticore}]}]},`
+`[a@manticore, {b@m
+
+anticore, c@manticore}]}]},`
 `{sync_nodes_mandatory, [a@manticore, c@manticore]},`
 `{sync_nodes_timeout, 30000}``]}].`
-And here's the configuration for
-`c`:
+这是
+`c`的配置：
 
-
-Listing 9.5 The configuration for c@host (config/c.config)
+列表9.5 c@host的配置 (config/c.config)
 
 `[{kernel,`
 `[{distributed,`
 `[{chucky,`
 `5000,`
 `[a@manticore, {b@manticore, c@manticore}]}]},`
-`{sync\_nodes\_mandatory, [a@manticore, b@manticore]},`
-`{sync\_nodes\_timeout, 30000}``]}].`
-Step 4: Compile Chucky on all the Nodes
+`{sync_nodes_mandatory, [a@manticore, b@manticore]},`
+`{sync_nodes_timeout, 30000}``]}].`
+步骤4：在所有节点上编译Chucky
 
-
-The application should be compiled on machine it is on. Compiling
+应用程序应该在其所在的机器上编译。
 `Chucky`
-is easy enough:
+的编译非常简单：
 
 `% mix compile`
-Once again, remember to do this on *every machine* of the cluster.
+再次提醒，在*每台机器*上都要这样做。
 
+步骤5：启动分布式应用程序
 
-Step 5: Start the Distributed Application
+打开三个不同的终端。在每个终端上，运行这些命令：
 
-
-Open three different terminals. On each of them, run these commands:
-
-
-For
-`a`:
+对于`a`：
 
 `% iex --sname a -pa _build/dev/lib/chucky/ebin --app chucky --erl "-config config/a.config"`
-Next, for
-`b`:
+接下来，对于`b`：
 
 `% iex --sname b -pa _build/dev/lib/chucky/ebin --app chucky --erl "-config config/b.config"`
-Finally, for
-`c`:
+最后，对于`c`：
 
 `% iex --sname c -pa _build/dev/lib/chucky/ebin --app chucky --erl "-config config/c.config"`
-The above incantation is slightly cryptic, but still decipherable:
+上述咒语虽然有点神秘，但仍可解释：
+ 
+- `--sname <name>`：启动一个分布式节点，并为其分配*短名称*。 
+- `-pa <path>`：将给定路径*前置*到Erlang代码路径。这个路径指向从Chucky运行
+- `mix compile`后生成的BEAM文件。（*附加*版本是`-pz`。）  
+- `--app <application>`：启动应用程序及其依赖项。
+- `--erl <switches>`：传递给Erlang的开关。在我们的示例中，
+- `-config config/c.config`用于配置OTP应用程序。
 
+9.4 故障转移和接管实战
 
-·     
-`--sname <name>`: Starts a distributed node, and assigns a *short name* to it.
+经过这么多努力，让我们看看实际效果吧！你会注意到，当你启动 `a`（甚至 `b`）时，直到启动 `c` 才会发生事情。在每个终端中运行 `Chucky.fact`：
 
+清单 9.6 Chucky 可以从集群中的任何节点访问
 
-·     
-`-pa <path>`: *Prepends* the given path to the Erlang code path. This path points to the BEAM files generated from Chucky after running
-`mix compile`. (The *appends* version is
-`-pz`.)
+```
+23:10:54.465 [info]  Application is started on a@manticore
+iex(a@manticore)1> Chucky.fact
+"Chuck Norris doesn't read, he just stares the book down until it tells him what he wants."
 
+iex(b@manticore)1> Chucky.fact
+"Chuck Norris can use his fist as his SSH key. His foot is his GPG key."
 
-·     
-`--app <application>`: Starts the application along with its dependencies.
+iex(c@manticore)1> Chucky.fact
+"Chuck Norris never wet his bed as a child. The bed wet itself out of fear."
+```
 
+虽然 *看起来* 应用程序在每个单独的节点上运行，我们可以轻松地说服自己这不是这种情况。注意在第一个终端，消息 `Application is started on a@manticore` 在 `a` 上打印出来，但在其他节点上没有。
 
-·     
-`--erl <switches>`: Switches passed down to Erlang. In our example,
-`-config config/c.config`
-is used to configure OTP applications.
+还有另一种方法可以告诉我们当前节点上运行了哪些应用程序。使用 `Application.started_applications/1`，我们可以清楚地看到 `Chucky` 在 `a` 上运行：
 
+清单 9.7 Application.started_applications/0 显示 a@host 上的 Chucky
 
-9.4           Failover and Takeover in Action
+```
+iex(a@manticore)1> Application.started_applications
+[{:chucky, 'chucky', '0.0.1'}, {:logger, 'logger', '1.1.1'},
+ {:iex, 'iex', '1.1.1'}, {:elixir, 'elixir', '1.1.1'},
+ {:compiler, 'ERTS CXC 138 10', '6.0.1'}, {:stdlib, 'ERTS CXC 138 10', '2.6'}, {:kernel, 'ERTS CXC 138 10', '4.1'}]
+```
 
+然而，`Chucky` *没有* 在 `b` 和 `c` 上运行。这里只显示了 `b` 的输出，因为两个节点的输出是相同的：
 
-After all that hard work, let's see some action! You will notice that when you started
-`a`
-(and even
-`b`), nothing happens until
-`c`
-is started. In each terminal, run
-`Chucky.fact`:
+清单 9.8 Chucky 没有在 b@host 和 c@host（未显示）上运行
 
+```
+iex(b@manticore)1> Application.started_applications
+[{:logger, 'logger', '1.1.1'}, {:iex, 'iex', '1.1.1'},
+ {:elixir, 'elixir', '1.1.1'}, {:compiler, 'ERTS CXC 138 10', '6.0.1'}, {:stdlib, 'ERTS CXC 138 10', '2.6'}, {:kernel, 'ERTS CXC 138 10', '4.1'}]
+```
 
-Listing 9.6 Chucky can be accessed from any node in the cluster
+现在，让我们通过退出 `iex`（按两次 Ctrl + C）来终止 `a`。大约5秒钟后，你会注意到 `Chucky` 现在已经自动在 `b` 上启动了：
 
-`23:10:54.465 [info]  Application is started on a@manticore`
-`iex(a@manticore)1> Chucky.fact`
-`"Chuck Norris doesn't read, he just stares the book down untill it tells him what he wants."`
+清单 9.9 当 a@host 停止后，b@host 接管
 
-`iex(b@manticore)1> Chucky.fact`
-`"Chuck Norris can use his fist as his SSH key. His foot is his GPG key."`
+```
+iex(b@manticore)1>
+23:16:42.161 [info]  Application is started on b@manticore
+```
 
-`iex(c@manticore)1> Chucky.fact``"Chuck Norris never wet his bed as a child. The bed wet itself out of fear."`
-While it *seems* that the application is running on each individual node, we can easily convince ourselves that this is not the case. Notice that in the first terminal, the message
-`Application is started on a@manticore`
-is printed out on
-`a`, but not the others.
+这是多么棒的事情！集群中的剩余节点判定 `a` 不可达并假定其已死亡。因此，`b` 承担了运行 `Chucky` 的责任。如果你现在在 `b` 上运行 `Application.started_applications/1`，你会看到类似的内容：
 
+清单 9.10 重新运行 Application.started_applications/0 现在显示 b@host 上的 Chucky
 
-There is another way to tell what applications are running on the current node. With
-`Application.started_applications/1`, we can clearly see that
-`Chucky`
-is running on
-`a`:
+```
+iex(b@manticore)2> Application.started_applications
+[{:chucky, 'chucky', '0.0.1'}, {:logger, 'logger', '1.1.1'},
+ {:iex, 'iex', '1.1.1'}, {:
 
+elixir, 'elixir', '1.1.1'},
+ {:compiler, 'ERTS CXC 138 10', '6.0.1'}, {:stdlib, 'ERTS CXC 138 10', '2.6'}, {:kernel, 'ERTS CXC 138 10', '4.1'}]
+```
 
-Listing 9.7 Application.started\_applications/0 shows Chucky on a@host
+在 `c` 上，你可以确信 `Chucky` 仍在运行：
 
-`iex(a@manticore)1> Application.started_applications`
-`[{:chucky, 'chucky', '0.0.1'}, {:logger, 'logger', '1.1.1'},`
-`{:iex, 'iex', '1.1.1'}, {:elixir, 'elixir', '1.1.1'},`
-`{:compiler, 'ERTS  CXC 138 10', '6.0.1'}, {:stdlib, 'ERTS  CXC 138 10', '2.6'},``{:kernel, 'ERTS  CXC 138 10', '4.1'}]`
-However, it
-`Chucky`
-is *not* running on
-`b`
-and
-`c`. Only the output of
-`b`
-is shown here, since the output on both nodes is identical:
+清单 9.11 通常情况下，仍然可以从 c@host 访问 Chucky
 
+```
+iex(c@manticore)1> Chucky.fact
+"The Bermuda Triangle used to be the Bermuda Square, until Chuck Norris Roundhouse kicked one of the corners off."
+```
 
-Listing 9.8 Chucky is not running on b@host and c@host (not shown)
+现在，让我们看看接管实战。当 `a` 重新加入集群时会发生什么？由于 `a` 是集群中优先级最高的节点，`b` 将让位给 `a`。换句话说，`a` 将接管 `b`。再次启动 `a`：
 
-`iex(b@manticore)1> Application.started_applications`
-`[{:logger, 'logger', '1.1.1'}, {:iex, 'iex', '1.1.1'},`
-`{:elixir, 'elixir', '1.1.1'}, {:compiler, 'ERTS  CXC 138 10', '6.0.1'},``{:stdlib, 'ERTS  CXC 138 10', '2.6'}, {:kernel, 'ERTS  CXC 138 10', '4.1'}]`
-Now, let's terminate
-`a`
-by exiting
-`iex`
-(entering Ctrl + C twice). In about 5 seconds, you will notice that
-`Chucky`
-has now automatically started in
-`b`:
+```
+% iex --sname a -pa _build/dev/lib/chucky/ebin --app chucky --erl "-config config/a.config"
+```
 
+在 `a` 中，你会看到类似的内容：
 
-Listing 9.9 When a@host goes down, b@host takes over
+```
+23:23:36.695 [info]  a@manticore is taking over b@manticore
+iex(a@manticore)1>
+```
 
-`iex(b@manticore)1>`
-`23:16:42.161 [info]  Application is started on b@manticore`
-How awesome is that? The remaining nodes in the cluster determined that
-`a`
-was unreachable and presumed dead. Therefore,
-`b`
-assumed the responsibility of running
-`Chucky`. If you now run
-`Application.started_applications/1`
-on
-`b`, you would see something like:
+在 `b` 中，你会注意到应用程序已停止：
 
+清单 9.12 当 a@host 重新启动并重新加入集群时，b@host 让位
 
-Listing 9.10 Re-running Application.started\_applications/0 now shows Chucky on b@host
+```
+iex(b@manticore)3>
+23:23:36.707 [info]  Application chucky exited: :stopped
+```
 
-`iex(b@manticore)2> Application.started_applications`
-`[{:chucky, 'chucky', '0.0.1'}, {:logger, 'logger', '1.1.1'},`
-`{:iex, 'iex', '1.1.1'}, {:elixir, 'elixir', '1.1.1'},`
-`{:compiler, 'ERTS  CXC 138 10', '6.0.1'}, {:stdlib, 'ERTS  CXC 138 10', '2.6'},``{:kernel, 'ERTS  CXC 138 10', '4.1'}]`
-On
-`c`, you can convince yourself that
-`Chucky`
-is still running:
+当然，`b` 仍然可以提供一些 Chuck Norris 的事实：
 
+```
+iex(b@manticore)4> Chucky.fact
+"It takes Chuck Norris 20 minutes to watch 60 Minutes."
+```
 
-Listing 9.11 As usual, Chucky can still be accessed from c@host
+就这样！我们已经看到了一整个故障转移和接管周期。在下一节中，我们将看看如何连接同一本地区域网络中的节点。
 
-`iex(c@manticore)1> Chucky.fact`
-`"The Bermuda Triangle used to be the Bermuda Square, until Chuck Norris Roundhouse kicked one of the corners off."`
-Now, let's see some takeover in action. What happens when
-`a`
-rejoins the cluster? Since
-`a`
-is the highest priority node in the cluster,
-`b`
-will yield control to
-`a`. In other words,
-`a`
-will takeover
-`b`. Start
-`a`
-again:
+9.5 连接局域网中的节点，Cookie 和安全性
 
-`% iex --sname a -pa _build/dev/lib/chucky/ebin --app chucky --erl "-config config/a.config"`
-In
-`a`, you will see something like:
+安全性在 Erlang 设计师思考分布式时并不是一个重要考虑因素。原因是节点将在他们自己的内部/可信网络中使用。因此，事情被保持得相当简单。
 
-`23:23:36.695 [info]  a@manticore is taking over b@manticore`
-`iex(a@manticore)1>`
-In
-`b`, you will notice that the application has stopped:
+为了让两个节点通信，他们需要做的就是共享一个 *cookie*。这个 cookie 是一个通常存储在你的主目录中的纯文本文件：
 
+```bash
+% cat ~/.erlang.cookie
+XLVCOLWHHRIXHRRJXVCN
+```
 
-Listing 9.12 When a@host restarts and rejoins the cluster, b@host yields control
+当你在同一台机器上启动节点时，你不必担心 cookie，因为所有节点在你的主目录中共享同一个 cookie。然而，一旦你开始连接到其他机器，你将不得不确保这些 cookie 都是相同的。不过，还有另一种选择。你也可以显式地调用 `Node.set_cookie/2`。在本节中，我们将看到如何连接到不在同一台机器上，但在同一局域网络中的节点。
 
-`iex(b@manticore)3>`
-`23:23:36.707 [info]  Application chucky exited: :stopped`
-Of course,
-`b`
-can still dish out some Chuck Norris facts:
+9.5.1 查询两台机器的IP地址
 
-`iex(b@manticore)4> Chucky.fact`
-`"It takes Chuck Norris 20 minutes to watch 60 Minutes."`
-There you have it! We have seen one complete cycle of failover and takeover. In the next section, we will look at connecting nodes that are in the same local area network.
+首先，我们需要找出两台机器的IP地址。在Linux/Unix系统上，通常使用`ifconfig`命令。同时，请确保它们都连接到同一个局域网（LAN）。这可能意味着将机器插入同一个路由器/交换机，或者让机器连接到同一个无线接入点。下面是我在其中一台机器上的样例输出：
 
+清单 9.13 我的机器上的ifconfig输出
 
-9.5           Connecting Nodes in a LAN, Cookies and Security
+```bash
+% ifconfig
+lo0: flags=8049<UP,LOOPBACK,RUNNING,MULTICAST> mtu 16384
+options=3<RXCSUM,TXCSUM>
+inet6 ::1 prefixlen 128
+inet 127.0.0.1 netmask 0xff000000
+inet6 fe80::1%lo0 prefixlen 64 scopeid 0x1
+nd6 options=1<PERFORMNUD>
+gif0: flags=8010<POINTOPOINT,MULTICAST> mtu 1280
+stf0: flags=0<> mtu 1280
+en0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+ether 10:93:e9:05:19:da
+inet6 fe80::1293:e9ff:fe05:19da%en0 prefixlen 64 scopeid 0x4
+inet 192.168.0.100 netmask 0xffffff00 broadcast 192.168.0.255
+nd6 options=1<PERFORMNUD>
+media: autoselect status: active
+```
 
+你应该关注的数字是`192.168.0.100`。当我在另一台机器上执行相同步骤时，IP地址是`192.168.0.103`。请注意，我们在这里使用的是IPv4地址。如果你使用IPv6地址，你将需要在接下来的示例中使用IPv6地址。
 
-Security wasn’t a huge thing on the minds of Erlang designers when they were thinking about distribution. The reason for that was that the nodes were going to be used in their own internal/trusted networks. As such, things were kept pretty simple.
+9.5.2 将两个节点连接起来
 
+让我们试试看。在第一台机器上，启动`iex`，但这次使用长名称（`--name`）标志。同时，在名称后附加`@<ip-address>`。
 
-In order for two nodes to communicate, all they need to do is share a *cookie*. This cookie is a plain text file stored usually in your home directory:
+```elixir
+% iex --name one@192.168.0.100
+Erlang/OTP 18 [erts-7.1] [source] [64-bit] [smp:4:4] [async-threads:10] [hipe] [kernel-poll:false] [dtrace]
 
-`% cat ~/.erlang.cookie`
-`XLVCOLWHHRIXHRRJXVCN`
-When you start nodes on the same machine, you didn’t have to worry about cookies because all the nodes shared the same cookie in your home directory. However, once you start connecting to other machines, you will have to ensure that these cookies are all the same. There is an alternative though. You can also explicitly call
-`Node.set_cookie/2`. In this section, we will see how we can connect to nodes that are not on the same machine, but on the same local network.
+Interactive Elixir (0.13.1-dev) - press Ctrl+C to exit (type h() ENTER for help)iex(one@192.168.0.100)1>
+```
 
+在第二个节点上执行相同的步骤：
 
-9.5.1        Find out the IP Addresses of both machines
+```elixir
+% iex --name two@192.168.0.103
+Erlang/OTP 18 [erts-7.1] [source] [64-bit] [smp:4:4] [async-threads:10] [hipe] [kernel-poll:false] [dtrace]
 
+Interactive Elixir (1.1.1) - press Ctrl+C to exit (type h() ENTER for help)iex(two@192.168.0.103)1>
+```
 
-First, we need to find out the IP addresses of both machines. On Linux/Unix systems, that's usually
-`ifconfig`. Also, do make sure that they both are connected to the same LAN. This could mean either plugging the machines into the same router/switch or having the machines connected to the same wireless endpoint. Here is a sample output on one of my machines:
+现在，让我们尝试将`one@192.168.0.100`和`two@192.168.0.103`连接起来：
 
+```
+iex(one@192.168.0.100)1> Node.connect :'two@192.168.0.103'
+false
+```
 
-Listing 9.13 The output of ifconfig on my machine
+等等，为什么呢？在`two@192.168.0.103`上，你会看到一个类似的错误报告：
 
-`% ifconfig`
-`lo0: flags=8049<UP,LOOPBACK,RUNNING,MULTICAST> mtu 16384`
-`options=3<RXCSUM,TXCSUM>`
-`inet6 ::1 prefixlen 128`
-`inet 127.0.0.1 netmask 0xff000000`
-`inet6 fe80::1%lo0 prefixlen 64 scopeid 0x1`
-`nd6 options=1<PERFORMNUD>`
-`gif0: flags=8010<POINTOPOINT,MULTICAST> mtu 1280`
-`stf0: flags=0<> mtu 1280`
-`en0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500`
-`ether 10:93:e9:05:19:da`
-`inet6 fe80::1293:e9ff:fe05:19da%en0 prefixlen 64 scopeid 0x4`
-`inet 192.168.0.100 netmask 0xffffff00 broadcast 192.168.0.255`
-`nd6 options=1<PERFORMNUD>`
-`media: autoselect``status: active`
-The numbers you should be looking out for is
-`192.168.0.100`. When I performed the same steps on the other machine, the IP address is
-`192.168.0.103`. Do note that we are using IPv4 addresses here. If you were using IPv6 addresses you would have to use the IPv6 addresses for the following examples.
+```elixir
+=ERROR REPORT==== 25-May-2014::22:32:25 ===
+** Connection attempt from disallowed node 'one@192.168.0.100' **
+```
 
+发生了什么？原来，我们缺少了一个关键成分——*cookie*。
 
-9.5.2        Connecting both Nodes together
+9.5.3 记住Cookie！
 
+当你在同一台机器上连接节点*并且*没有使用`--cookie`标志设置任何cookie时，Erlang VM只是使用存储在你的主目录中生成的cookie：
 
-Let's give this a go. On the first machine, start
-`iex`
-but this time with the long name (`--name`) flag. Also, append
-`@<ip-address>`
-after the name.
+```bash
+% cat ~/.erlang.cookie
+XBYWEVWS
 
-`% iex --name one@192.168.0.100`
-`Erlang/OTP 18 [erts-7.1] [source] [64-bit] [smp:4:4] [async-threads:10] [hipe] [kernel-poll:false] [dtrace]`
+NBAROAXWPTZX%
+```
 
-`Interactive Elixir (0.13.1-dev) - press Ctrl+C to exit (type h() ENTER for help)``iex(one@192.168.0.100)1>`
-Perform the same steps on the second node:
+这意味着，如果你在*同一*本地机器上*不使用* cookie标志连接节点，通常不会遇到任何问题。
 
-`% iex --name two@192.168.0.103`
-`Erlang/OTP 18 [erts-7.1] [source] [64-bit] [smp:4:4] [async-threads:10] [hipe] [kernel-poll:false] [dtrace]`
+然而，在不同的机器上，这就是一个问题。这是因为各个机器上的cookies很可能不同。考虑到这一点，让我们重新开始整个过程。这次，我们为每个节点提供相同的cookie值。或者，你也可以将相同的`.~/.erlang-cookie`复制到所有节点上。在本节中，我们使用前一种技术。在第一台机器上：
 
-`Interactive Elixir (1.1.1) - press Ctrl+C to exit (type h() ENTER for help)``iex(two@192.168.0.103)1>`
-Now, let's try to connect
-`one@192.168.0.100`
-and [`two@192.168.0.103`](mailto:two@192.168.0.103) together:
+```elixir
+% iex --name one@192.168.0.100 --cookie monster
+Erlang/OTP 18 [erts-7.1] [source] [64-bit] [smp:4:4] [async-threads:10] [hipe] [kernel-poll:false] [dtrace]
 
-`iex(one@192.168.0.100)1> Node.connect :'two@192.168.0.103'`
-`false`
-Wait what? On
-`two@192.168.0.103`, you would be able to see a similar error report:
+Interactive Elixir (1.1.1) - press Ctrl+C to exit (type h() ENTER for help)iex(one@192.168.0.100)1>
+```
 
-`=ERROR REPORT==== 25-May-2014::22:32:25 ===`
-`** Connection attempt from disallowed node 'one@192.168.0.100' **`
-What happened? Turns out, we are missing a key ingredient – The *cookie*.
+在第二台机器上，我们确保使用*相同*的cookie值：
 
+```elixir
+% iex --name two@192.168.0.103 --cookie monster
+Erlang/OTP 18 [erts-7.1] [source] [64-bit] [smp:4:4] [async-threads:10] [hipe] [kernel-poll:false] [dtrace]
 
-9.5.3        Remember the Cookie!
+Interactive Elixir (1.1.1) - press Ctrl+C to exit (type h() ENTER for help)iex(two@192.168.0.103)1>
+```
 
+让我们再次尝试将`one@192.168.0.100`连接到`two@192.168.0.103`：
 
-When you connect nodes on the same machine *and* you do not set any cookie with the
-`--cookie`
-flag, the Erlang VM simply uses the generated one that sits in your home directory:
+```elixir
+iex(one@192.168.0.100)1> Node.connect :'two@192.168.0.103'
+true
+```
 
-`% cat ~/.erlang.cookie`
-`XBYWEVWSNBAROAXWPTZX%`
-This means that if you connect nodes *without* the cookie flag on the *same* local machine, you usually will not hit into any problems.
+太好了！我们已经成功地在局域网上建立了一个Elixir集群。作为一个健康检查，我们也可以做一个`Node.list/0`。回想一下，这个函数只列出它的邻居，因此不包括当前节点：
 
+```elixir
+iex(one@192.168.0.100)2> Node.list
+[:"two@192.168.0.103"]
+```
 
-On different machines however, this *is* a problem. That's because the cookies are most likely different across the various machines. With this in mind, let's restart the entire process. This time however, we supply the same cookie value for every node. Alternatively, you can either copy the same
-`.~/.erlang-cookie`
-across all the nodes. In this section, we use the former technique. On the first machine:
+9.6 总结
 
-`% iex --name one@192.168.0.100 --cookie monster`
-`Erlang/OTP 18 [erts-7.1] [source] [64-bit] [smp:4:4] [async-threads:10] [hipe] [kernel-poll:false] [dtrace]`
+在一个预期能够承受崩溃的应用程序中实现正确的故障转移（Failover）和接管（Takeover）是绝对必要的。与许多语言和平台不同，故障转移和接管在 OTP 中是内置的。在这一章中，我们继续探索分布式系统。特别地，我们覆盖了：
 
-`Interactive Elixir (1.1.1) - press Ctrl+C to exit (type h() ENTER for help)``iex(one@192.168.0.100)1>`
-On the second machine, we make sure we use the *same* cookie value:
+- 实现一个展示故障转移和接管的分布式应用程序
+- 配置故障转移和接管
+- 将节点连接到局域网（LAN）
+- 使用 Cookie
+- 一些关于 Chuck Norris 的笑话
 
-`% iex --name two@192.168.0.103 --cookie monster`
-`Erlang/OTP 18 [erts-7.1] [source] [64-bit] [smp:4:4] [async-threads:10] [hipe] [kernel-poll:false] [dtrace]`
-
-`Interactive Elixir (1.1.1) - press Ctrl+C to exit (type h() ENTER for help)``iex(two@192.168.0.103)1>`
-Let's connect
-`one@192.168.0.100`
-to
-`two@192.168.0.103`
-again:
-
-`iex(one@192.168.0.100)1> Node.connect :'two@192.168.0.103'`
-`true`
-Great success! We have successfully set up an Elixir cluster over a LAN. As a sanity check, we can also do a
-`Node.list/0.`
-Recall that this function only lists its neighbors and therefore doesn’t include the current node:
-
-`iex(one@192.168.0.100)2> Node.list`
-`[:"two@192.168.0.103"]`
-9.6           Summary
-
-
-Having proper failover and takeover implemented in an application that is expected to survive crashes is absolutely essential. Unlike a lot of languages and platforms, failover and takeover are baked into OTP. In this chapter, we continued our explorations in distribution. In particular, we covered:
-
-
-·      Implement a distributed application that demonstrates failover and takeover
-
-
-·      Configure for failover and takeover
-
-
-·      Connect nodes to a local area network (LAN)
-
-
-·      Make use of cookies
-
-
-·      A few Chuck Norris jokes
-
-
-In the next chapter and the chapter after that, we look at testing in Elixir. Instead of covering unit testing, we explore property-based testing and also learn how to test concurrent programs.
-
-
-
-
-
+在接下来的章节和之后的章节中，我们将探讨在 Elixir 中的测试。我们不仅仅覆盖单元测试，还将探索基于属性的测试，并学习如何测试并发程序。
