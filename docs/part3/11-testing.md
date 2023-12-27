@@ -1,113 +1,74 @@
-# 11      Property-Based and Concurrency Testing
+# 11 基于属性和并发性的测试
 
+本章包括：
 
-This chapter covers:
+- 使用QuickCheck进行基于属性的测试
+- 使用Concuerror检测并发错误
 
+在这最后一章（万岁！），我们继续调查一些可用的测试工具。你刚刚看到了ExUnit和Dialyzer。然而，Erlang生态系统还有更多的东西可以提供，正如接下来的部分将展示的那样。
 
-·      Property-Based Testing with QuickCheck
+首先，有QuickCheck，这是一个基于属性的测试工具。基于属性的测试将单元测试颠倒过来。与传统的单元测试编写*特定*的测试用例不同，基于属性的测试强迫你以*一般*规范的形式表达你的测试用例。一旦你有了这些规范，这个工具就可以生成你心中期望的尽可能多的测试用例。
 
+接下来，我们将看一下Concuerror。Concuerror是一个系统地检测你的程序中并发错误的工具。Concuerror可以指出难以检测和经常令人惊讶的竞态条件、死锁和潜在的进程崩溃。
 
-·      Detect concurrency errors with Concuerror
+本章包含大量的例子供你尝试，提供了充足的机会让你感受这些工具。当你的程序开始变得复杂时，这些工具可以为你的程序提供令人难以置信的洞察力。让我们开始提升我们的测试技能吧！
 
+11.1       基于属性的测试和QuickCheck简介
 
-In this final chapter (hurray!), we continue the survey of some of the testing tools that are available. You have just seen ExUnit and Dialyzer. However, the Erlang ecosystem has much more to offer, as the following sections will demonstrate.
+面对现实 - 单元测试可能是一项艰巨的工作。你经常需要考虑几种情况，并确保覆盖所有的边缘情况。你需要考虑像垃圾数据、极端值和懒惰的程序员只想以最愚蠢的方式通过测试的情况。如果我告诉你，你可以通过编写*规范*来*生成*测试用例，而不是手动编写单个测试用例，你会怎么想？这就是基于属性的测试的全部内容。
 
-
-First, there’s QuickCheck, the property-based testing tool. Property-based testing turns unit testing on its head. Instead of writing *specific* test cases as with traditional unit testing, property based testing forces you to express your test cases in terms *general* specifications. Once you have these specifications in place, the tool can generate as many test cases as you heart desires.
-
-
-Next, we then look at Concuerror. Concuerror is a tool that systematically detects concurrency errors in your programs. Concuerror can point out hard to detect and often surprising race conditions, deadlocks and potential process crashes.
-
-
-This chapter contains plenty of examples to try out, providing ample opportunity to get a feel of these tools. These tools can lend an incredible amount of insight into your programs, especially when they start to grow in complexity. Let’s starting upgrading our testing skills!
-
-
-11.1       Introduction to Property-Based Testing and QuickCheck
-
-
-Face it – Unit-testing can be hard work. You often need to think of several scenarios and make sure you cover all the edge cases. You need to cater for cases like garbage data, extreme values and lazy programmers who just want the test to pass in the dumbest way possible. What if I told you that instead of writing individual test cases by hand, you could instead *generate* test cases by writing a *specification* instead? That is exactly what property based testing is about.
-
-
-Here’s a quick example: Say we are testing a sorting function. In unit-testing land, we would come up with different examples of lists such as:
-
+下面是一个快速的例子：假设我们正在测试一个排序函数。在单元测试领域，我们会想出不同的列表示例，如：
 
 `·`
 `[3, 2, 1, 5, 4]`
 
+`·`
+`[3, 2, 4, 4, 1, 5, 4] # 有重复的`
 
 `·`
-`[3, 2, 4, 4, 1, 5, 4] # With duplicates`
+`[1, 2, 3, 4, 5]       # 已经排序了`
 
+你能想到我们可能遗漏的其他情况吗？在我脑海中，我们遗漏了像空列表和包含负整数的列表这样的情况。说到整数，其他数据类型如原子或元组呢？如你所见，这开始变得繁琐，且遗漏某些边缘情况的概率大大增加。
 
-·     
-`[1, 2, 3, 4, 5]       # Already sorted`
- 
+使用基于属性的测试，我们可以指定排序函数的属性。例如，对列表排序一次与对列表排序两次是一样的。我们可以像这样指定一个属性（暂时不用担心语法）：
 
-
-Can you think of other cases that we might have missed out? At the top of my head, we are missing cases such as the empty list a list that contains negative integers. Speaking of integers, what about other data types like atoms or tuples? As you can see, it starts to become tedious and the probability of missing some edge case goes way up.
-
-
-With property-based testing, we can specify properties of our sorting function. For example, sorting a list once is the same as sorting the list twice. We can specify a property like so (do not worry about the syntax yet):
-
-
-Listing 11.1 An example property for list sorting
+清单 11.1 列表排序的一个示例属性
 
 `@tag numtests: 1000`
 `property "sorting twice will yield the same result" do`
 `forall l <- list(int) do`
 `ensure l |> Enum.sort == l |> Enum.sort |> Enum.sort`
 `end``end`
-This property generates *a thousand* different kinds of lists of integers and make sure that the properties hold for each of this list. If the property fails, the tool will automatically *shrink* the test case to find the smallest list that fails the same property.
+这个属性生成了*一千*种不同的整数列表，并确保这个属性对每个列表都成立。如果属性失败，工具会自动*缩小*测试用例，找到使同一属性失败的最小列表。
 
+我们将要使用的工具是QuickCheck。准确地说，我们将使用Quviq开发的Erlang QuickCheck。虽然Erlang QuickCheck的完整版本需要商业许可，但我们将使用的是一个缩小版的Erlang QuickCheck *Mini*。
 
-QuickCheck is the tool that we are going to use. To be precise, we are going to use Erlang QuickCheck developed by Quviq. While the full-version of Erlang QuickCheck requires a commercial license, the one that we are going to use is a scaled-down version called Erlang QuickCheck *Mini*.
+Quviq QuickCheck的付费版和免费版有什么区别？
 
+两个版本都支持基于属性的测试，这是这个工具的全部要点！付费版本有其他的优点，比如使用状态机进行测试，并行执行测试用例以检测竞态条件（我们将有Conqueror来处理这个问题），当然还有商业支持。
 
+你应该知道，除了Erlang QuickCheck，还有一些类似的基于属性的测试工具可用：
 
-What’s the difference between the paid and free version of Quviq QuickCheck?
+- Triform QuickCheck 或 *Triq* [[1]](#u83UNuzRV57fRwEzhWNgBm6)
+- PropEr[[2]](#uzOPdfenDvyvCoAdHdYLuV8): 一个受QuickCheck启发的Erlang的基于属性的测试工具
 
+Quivq的版本可以说是这三个中最成熟的。虽然免费版本在功能上有些限制，但对我们的目的来说已经足够了。一旦你掌握了基础知识，你可以轻松地转向其他版本的QuickCheck，因为概念是相同的，语法也相似。让我们开始在我们的系统上安装QuickCheck。
 
+11.1.1     安装 QuickCheck
 
-Both versions support property-based testing which is this whole point!. The paid version has other niceties like testing with state machines, parallel execution of test cases to detect race conditions (we will have Conqueror for that) and of course, commercial support.
+安装 QuickCheck 比通常的 Elixir 依赖稍微复杂一些，但并不困难。首先，前往 Quviq[[3]](#utP7ZYyoYEcEE26GeQaeT75) 并下载 QuickCheck (Mini) 的*免费*版本。除非你有有效的许可证，否则你应该下载免费版本，否则你会被提示输入许可证。一旦你下载了文件，就可以按照以下步骤操作：
 
-
-
- 
-
-
-
-You should be aware that apart from Erlang QuickCheck, there are a few flavors of similar property-based testing tools available:
-
-
-·      Triform QuickCheck or *Triq* [[1]](#u83UNuzRV57fRwEzhWNgBm6)
-
-
-·      PropEr[[2]](#uzOPdfenDvyvCoAdHdYLuV8): A QuickCheck-inspired property-based testing tool for Erlang
-
-
-Quivq’s version is arguably the most mature of the three. Although the free version is somewhat limited in features, it is more than adequate for our purposes. Once you have grasped the basics, you can easily move on to the other flavors of QuickCheck since the concepts are identical and the syntax similar. Let’s get started with installing QuickCheck onto our system.
-
-
-11.1.1     Installing QuickCheck
-
-
-Installing QuickCheck is slightly more involved than the usual Elixir dependency, but not difficult at all. First, head over to Quviq[[3]](#utP7ZYyoYEcEE26GeQaeT75) and download the *free* version of QuickCheck (Mini). Unless you have a valid license, you should download the free version otherwise you will be prompted for a license. Here are the steps once you have downloaded the file:
-
-
-·      Unzip the file and
+·      解压文件并
 `cd`
-into the resulting folder
+进入结果文件夹
 
-
-·      Run
+·      运行
 `iex`
 
-
-·      Run
+·      运行
 `:eqc_install.install()`
 
-
-If everything went well, you will see:
+如果一切顺利，你会看到：
 
 `iex(1)> :eqc_install.install`
 `Installation program for "Quviq QuickCheck Mini" version 2.01.0.`
@@ -115,69 +76,63 @@ If everything went well, you will see:
 `Installing ["eqc-2.01.0"].`
 `Quviq QuickCheck Mini is installed successfully.`
 `Bookmark the documentation at /usr/local/Cellar/erlang/18.1/lib/erlang/lib/eqc-2.01.0/doc/index.html.``:ok`
-It would be wise to heed the helpful prompt to bookmark the documentation.
+遵循有用的提示将文档添加到书签会是明智的选择。
 
+11.1.2     在 Elixir 中使用 QuickCheck
 
-11.1.2     Using QuickCheck in Elixir
-
-
-Now that you have QuickCheck installed, we are back into familiar territory. Let’s create a new project to play with QuickCheck:
+现在你已经安装了 QuickCheck，我们回到了熟悉的领域。让我们创建一个新的项目来玩玩 QuickCheck：
 
 `mix new quickcheck_playground`
-Open
-`mix.ex`, and add the following:
+打开 `mix.ex`，并添加以下内容：
 
+清单 11.2 设置一个项目以使用 QuickCheck
 
-Listing 11.2 Setting up a project to use QuickCheck
+```elixir
+defmodule QuickcheckPlayground.Mixfile do
+use Mix.Project
 
-`defmodule QuickcheckPlayground.Mixfile do`
-`use Mix.Project`
+def project do
+[app: :quickcheck_playground,
+version: "0.0.1",
+elixir: "~> 1.2-rc",
+build_embedded: Mix.env == :prod,
+start_permanent: Mix.env == :prod,
+test_pattern: "*_{test,eqc}.exs",     #1
+deps: deps]
+end
 
-`def project do`
-`[app: :quickcheck_playground,`
-`version: "0.0.1",`
-`elixir: "~> 1.2-rc",`
-`build_embedded: Mix.env == :prod,`
-`start_permanent: Mix.env == :prod,`
-`test_pattern: "*_{test,eqc}.exs",     #1`
-`deps: deps]`
-`end`
+def application do
+[applications: [:logger]]
+end
 
-`def application do`
-`[applications: [:logger]]`
-`end`
+defp deps do
+[{:eqc_ex, "~> 1.2.4"}]                #2
+end
+end
+```
+#1: 为测试指定测试模式。注意 QuickCheck 测试的后缀 “\_eqc”。
 
-`defp deps do`
-`[{:eqc_ex, "~> 1.2.4"}]                #2`
-`end``end`
-#1: Specify the test pattern for tests. Note the suffix “\_eqc” for QuickCheck tests.
+#2: 添加 Erlang QuickCheck 的 Elixir 包装器。
 
+执行 `mix deps.get` 来获取依赖项。接下来让我们试一个例子！
 
-#2: Add the Elixir wrapper for Erlang QuickCheck.
+列表反转 - QuickCheck 的 “Hello World”
 
+我们将通过编写一个简单的列表反转属性来确保我们已经正确地设置了一切，即，反转一个列表两次会得到相同的列表。
 
-Do a
-`mix deps.get`
-to fetch the dependencies. Let’s try out an example next!
+```elixir
+defmodule ListsEQC do
+use ExUnit.Case
+use EQC.ExUnit
 
-
-List Reversing – The “Hello World” of QuickCheck
-
-
-We’ll make sure that we have everything set up correctly by writing a simple property of list reversal, namely, reversing a list twice yields back the same list.
-
-`defmodule ListsEQC do`
-`use ExUnit.Case`
-`use EQC.ExUnit`
-
-`property "reversing a list twice yields the original list" do`
-`forall l <- list(int) do`
-`ensure l |> Enum.reverse |> Enum.reverse == l`
-`end`
-`end`
-`end`
-Never mind what all these means for now. To run this test, execute
-`mix test test/lists_eqc.exs`:
+property "reversing a list twice yields the original list" do
+forall l <- list(int) do
+ensure l |> Enum.reverse |> Enum.reverse == l
+end
+end
+end
+```
+现在不用在意所有这些意味着什么。要运行这个测试，执行 `mix test test/lists_eqc.exs`：
 
 `% mix test test/lists_eqc.exs`
 `....................................................................................................`
@@ -187,32 +142,26 @@ Never mind what all these means for now. To run this test, execute
 `Finished in 0.06 seconds (0.05s on load, 0.01s on tests)`
 `1 test, 0 failures`
 `Randomized with seed 704750`
-Sweet! QuickCheck just ran *one hundred* tests. That’s the default number of tests that QuickCheck generates. We can modify the amount by annotating with
-`@tag numtests: <N>`, where
-`<N>`
-is a positive integer. Let’s purposely introduce an error to the property:
+太棒了！QuickCheck 刚刚运行了*一百*个测试。这是 QuickCheck 生成的默认测试数量。我们可以通过用 `@tag numtests: <N>` 进行注解来修改数量，其中 `<N>` 是一个正整数。让我们故意在属性中引入一个错误：
 
+清单 11. 3. 这是一个错误的列表反转属性
 
-Listing 11. 3. This is an erroneous list-reversing property
+```elixir
+defmodule ListsEQC do
+use ExUnit.Case
+use EQC.ExUnit
 
-`defmodule ListsEQC do`
-`use ExUnit.Case`
-`use EQC.ExUnit`
+property "reversing a list twice yields the original list" do
+forall l <- list(int) do
+# NOTE: THIS IS WRONG!
+ensure l |> Enum.reverse == l
+end
+end
+end
+```
+`ensure/2` 检查属性是否满足，并在属性失败时打印出一个错误消息。让我们再次运行 `mix test test/lists_eqc.exs` 看看会发生什么：
 
-`property "reversing a list twice yields the original list" do`
-`forall l <- list(int) do`
-`# NOTE: THIS IS WRONG!`
-`ensure l |> Enum.reverse == l`
-`end`
-`end`
-`end`
-`ensure/2`
-checks whether the property is satisfied, and prints out an error message if the property fails. Let’s run
-`mix test test/lists_eqc.exs`
-again and see what happens:
-
-
-Listing 11. 4 QuickCheck detects an inconsistency in the property and reports an example that fails it
+清单 11. 4 QuickCheck 检测到属性中的不一致，并报告一个失败的示例
 
 `% mix test test/lists_eqc.exs`
 `...................Failed! After 20 tests.`
@@ -233,491 +182,415 @@ Listing 11. 4 QuickCheck detects an inconsistency in the property and reports an
 `test/lists_eqc.exs:5`
 
 `Finished in 0.1 seconds (0.05s on load, 0.06s on tests)``1 test, 1 failure`
-After 20 tries, QuickCheck has reported that the property failed, and even provided a *counter example* to back up its claim. Now that we are confident that we have QuickCheck properly set up, we can get into the good stuff. But first, how do you go about designing your own properties?
+经过 20 次尝试，QuickCheck 报告属性失败，并提供了一个*反例*来支持其声明。现在我们有信心我们已经正确地设置了 QuickCheck，我们可以进入好东西。但首先，你如何设计你自己的属性呢？
 
+### 11.1.3     设计属性的模式
 
-11.1.3     Patterns for Designing Properties
+设计属性是基于属性的测试中最棘手的部分。但不用害怕！这里有一些指针在设计你自己的属性时会很有帮助。当你通过例子学习时，试着找出哪些启发式方法适合。
 
+反函数
 
-Designing properties is by far the trickiest bit about property-based testing. Fear not! Here are a couple of pointers that are helpful when devising your own properties. As you work through the examples, try to figure out which of these heuristics fit.
+这是最容易利用的一种。一些函数也有一个反函数。
 
+![](../../images/11_1.png)  
 
-Inverse Functions
+图 11. 1 反函数
 
+图 11.1 说明了反函数的含义。主要的思想是反函数撤销了原函数的操作。因此，执行原函数后再执行反函数基本上什么都没做。我们可以利用这个属性来测试二进制的编码和解码，例如使用 `Base.encode64/1` 和 `Base.decode64!` 作为例子：
 
-This is one of the easiest to exploit. Some functions also have an inverse counterpart.
+清单 11. 5 编码和解码是彼此的反函数
 
+```elixir
+property "encoding is the reverse of decoding" do
+forall bin <- binary do
+ensure bin |> Base.encode64 |> Base.decode64! == bin
+end
+end
+```
+你可以尝试执行上述属性，毫无意外，所有的测试都应该通过。这里有一些函数有反函数的更多例子：
 
-![](../images//11_1.png)  
+·      编码和解码
 
+·      序列化和反序列化
 
+·      分割和连接
 
-Figure 11. 1 An inverse function
+·      设置和获取
 
+利用不变性
 
-Figure 11.1 illustrates what an inverse function is about. The main idea is that the inverse function undoes the action of the original function. Therefore, executing the original function followed by executing the inverse function basically does nothing. We can make use of this property to test out encoding and decoding of binaries using
-`Base.encode64/1`
-and
-`Base.decode64!`
-as an example:
+另一种技术是利用不变性。不变性是一个在应用特定转换时保持不变的属性。两个不变性的例子：
 
+·      排序函数总是按顺序排序元素
 
-Listing 11. 5 Encoding and decoding are inverses of each other
+·      单调递增函数总是前一个元素小于或等于下一个元素
 
-`property "encoding is the reverse of decoding" do`
-`forall bin <- binary do`
-`ensure bin |> Base.encode64 |> Base.decode64! == bin`
-`end``end`
-You can try executing the above property and unsurprisingly all the tests should pass. Here are a few more examples of functions that have inverses:
+假设我们想要测试一个排序函数。首先，我们创建一个辅助函数，检查一个列表是否按递增顺序排序：
 
+```elixir
+def is_sorted([]), do: true
 
-·      Encoding and decoding
+def is_sorted(list) do
+list
+|> Enum.zip(tl(list))
+|> Enum.all?(fn {x, y} -> x <= y end)
+end
+```
+然后我们可以在属性中使用函数来检查排序函数是否正常工作：
 
+清单 11.6 检查排序不变性的属性
 
-·      Serializing and deserializing
+```elixir
+property "sorting works" do
+forall l <- list(int) do
+ensure l |> Enum.sort |> is_sorted == true
+end
+end
+```
+当你执行上述属性时，一切都应该通过。
 
+使用现有的实现
 
-·      Splitting and Joining
+假设你已经开发了一个可以在常数时间内进行排序的排序算法。测试你的实现的一个简单方法是与一个已知工作良好的*现有*实现进行比较。例如，我们可以用 *Erlang* 的一个来测试我们的自定义实现：
 
+清单 11. 7 对现有实现进行测试是保持功能一致性的好方法
 
-·      Setting and Getting
+```elixir
+property "List.super_sort/1" do
+forall l <- list(int) do
+ensure List.super_sort(l) == :lists.sort(l)
+end
+end
+```
 
+#### 使用更简单的实现
 
-Exploit Invariants
+这是前一种技术的轻微变化。假设你想要测试一个Map的实现。一种方法是使用一个之前的map实现。然而，这可能太麻烦了，而且你的实现的每一个操作可能并不（原谅这个双关语）映射到你想要测试的实现。
 
+还有另一种方法！与其使用一个map，为什么不使用像列表这样更简单的东西呢？是的，它可能不是世界上最高效的数据结构，但它简单，且易于创建map操作的实现。
 
-Another technique is to exploit invariants. An invariant is a property that remains unchanged when a specific transformation is applied. Two examples of invariants:
+![](../../images/11_2.png)  
 
+图 11. 2 使用一个更简单的实现来测试一个已经测试过的实现
 
-·      A sort function always sorts elements in order
-
-
-·      A monotonically increasing function is always such that the former element is smaller or equals to the next element
-
-
-Say we wanted to test out a sorting function. First, we create a helper function that checks if a list is sorted in increasing order:
-
-`def is_sorted([]), do: true`
-
-`def is_sorted(list) do`
-`list`
-`|> Enum.zip(tl(list))`
-`|> Enum.all?(fn {x, y} -> x <= y end)``end`
-We can then use the function in the property to then check if the sort function does its job properly:
-
-
-Listing 11.6 Property to checking if sorting invariant holds
-
-`property "sorting works" do`
-`forall l <- list(int) do`
-`ensure l |> Enum.sort |> is_sorted == true`
-`end``end`
-When you execute the above property, everything should pass.
-
-
-Use an Existing Implementation
-
-
-Suppose you have developed a sorting algorithm can perform sorting in constant time. One simple way to test your implementation is against an *existing* implementation that is known to work well. For example, we can test our custom implementation with *Erlang* one:
-
-
-Listing 11. 7 Testing against an existing implementation is a great way to maintain feature parity
-
-`property "List.super_sort/1" do`
-`forall l <- list(int) do`
-`ensure List.super_sort(l) == :lists.sort(l)`
-`end``end`
-Use a Simpler Implementation
-
-
-This is a slight variation of the previous technique. Let’s say you want to test an implementation of Map. One way is to use a previous implementation of a map. However, that might be too cumbersome, and not every operation of your implementation might (pardon the pun) map to the implementation that you want to test against.
-
-
-There is another way! Instead of using a map, why not use something simpler like a list? Yes, it might not be the most efficient data structure in the world, but it is simple, and easy to create implementations of the map operations.
-
-
-![](../images//11_2.png)  
-
-
-
-Figure 11. 2 Using a simpler implementation to test against a tested implementation
-
-
-For example, let’s test out the
+例如，让我们测试一下
 `Map.put/3`
-operation. When a value is added using an existing key, the old value will be replaced. How can we test this out? Let an example show you how:
+操作。当使用一个已存在的键添加一个值时，旧的值将被替换。我们如何测试这个呢？让一个例子告诉你：
 
+清单 11. 8 使用一个更简单的实现来测试一个更复杂的实现
 
-Listing 11. 8 Using a simpler implementation to test the more complicated one
+```elixir
+property "storing keys and values" do
+forall {k, v, m} <- {key, val, map} do
+map_to_list = m |> Map.put(k, v) |> Map.to_list
+map_to_list == map_store(k, v, map_to_list)
+end
+end
 
-`property "storing keys and values" do`
-`forall {k, v, m} <- {key, val, map} do`
-`map_to_list = m |> Map.put(k, v) |> Map.to_list`
-`map_to_list == map_store(k, v, map_to_list)`
-`end`
-`end`
+defp map_store(k, v, list) do
+case find_index_with_key(k, list) do
+{:match, index} ->
+List.replace_at(list, index, {k, v})
+_ ->
+[{k, v} | list]
+end
+end
 
-`defp map_store(k, v, list) do`
-`case find_index_with_key(k, list) do`
-`{:match, index} ->`
-`List.replace_at(list, index, {k, v})`
-`_ ->`
-`[{k, v} | list]`
-`end`
-`end`
-
-`defp find_index_with_key(k, list) do`
-`case Enum.find_index(list, fn({x,_}) -> x == k end) do`
-`nil   -> :nomatch`
-`index -> {:match, index}`
-`end``end`
-The
+defp find_index_with_key(k, list) do
+case Enum.find_index(list, fn({x,_}) -> x == k end) do
+nil   -> :nomatch
+index -> {:match, index}
+end
+end
+```
 `map_store/3`
-helper function basically simulates the behavior of how
+辅助函数基本上模拟了如何
 `Map.put/3`
-would have added a key/value pair. The list contains elements that are two-element tuples. The tuple represents a key/value pair. When
+会添加一个键/值对的行为。列表包含的元素是两元素元组。元组代表一个键/值对。当
 `map_store/3`
-finds tuple that matches the key, it will replace the entire tuple with the same key but with the new value. Otherwise, the new key/value is inserted into the list.
+找到匹配键的元组时，它将用相同的键但新的值替换整个元组。否则，新的键/值被插入到列表中。
 
-
-Here, we are exploiting the fact a map can be represented as a list, and also that the behavior of
+在这里，我们正在利用一个事实，即一个map可以被表示为一个列表，而且
 `Map.put/3`
-can be easily implemented using a list. In fact, most operations of the can be represented (and therefore tested) using a similar technique presented above.
+的行为可以很容易地使用一个列表来实现。事实上，大多数操作都可以用上面介绍的类似技术来表示（并因此进行测试）。
 
+执行不同顺序的操作
 
-Performing operations in different orders
+对于某些操作，顺序并不重要。这些例子有：
 
+·      追加一个列表并反转它，与在列表前面添加一个元素并反转列表是一样的
 
-For certain operations, the order doesn’t matter. Three examples of these are:
+·      以不同的顺序向集合中添加元素，不应影响集合中的结果元素
 
+·      添加一个元素并排序，得到的结果与在元素前面添加一个元素并排序是一样的
 
-·      Appending a list and reversing it is the same as prepending a list and reversing the list
+清单 11.9 排序的最终结果总是相同的，无论元素在哪里被添加
 
+```elixir
+property "appending an element and sorting it is the same as prepending an element and sorting it" do
+forall {i, l} <- {int, list} do
+[i|l] |> Enum.sort == l ++ [i] |> Enum.sort
+end
+end
+```
+当你执行上述属性时，所有的测试都应该通过。
 
-·      Adding elements to a set in different orders should not affect the resulting elements in the set
+幂等操作
 
+幂等操作是一种花哨的说法，意思是当一个操作执行一次或多次时，它将产生相同的结果。例如：
 
-·      Adding an element and sorting it gives the same results as prepending an element and sorting
-
-
-Listing 11.9 The end result of sorting is always the same, no matter where the element is added before
-
-`property "appending an element and sorting it is the same as prepending an element and sorting it" do`
-`forall {i, l} <- {int, list} do`
-`[i|l] |> Enum.sort == l ++ [i] |> Enum.sort`
-`end``end`
-When you execute the above property, everything should pass.
-
-
-Idempotent Operations
-
-
-An idempotent[[4]](#uDAzWNpJXjoRDvP35LqJIwB) operation is a fancy way of saying that an operation will yield the same result when it is performed once or performed repeatedly. For example:
-
-
-·      Calling
+·      使用相同的谓词调用
 `Enum.filter/2`
-with the same predicate twice is the same as doing it once
+两次，与做一次是一样的
 
-
-·      Calling
+·      调用
 `Enum.sort/1`
-twice is the same as doing it once
+两次，与做一次是一样的
 
+·      HTTP GET请求
 
-·      HTTP GET requests
+另一个例子是
+`Enum.uniq/2`, 其中调用函数两次不应有任何额外的效果：
 
+清单 11.10 调用一个幂等函数一次或多次总是得到相同的结果
 
-Another example is
-`Enum.uniq/2`, where calling the function twice should not have any additional effect:
+```elixir
+property "calling Enum.uniq/1 twice has no effect" do
+forall l <- list(int) do
+ensure l |> Enum.uniq == l |> Enum.uniq |> Enum.uniq
+end
+end
+```
+运行这个属性将通过所有的测试。当然，这六个并不是唯一的，但它们是一个很好的起点。下一个拼图的部分是生成器。让我们直接开始吧。
 
+11.1.4     生成器
 
-Listing 11.10 Calling an idempotent function once or multiple times always gives the same result
+生成器用于为我们的QuickCheck属性生成随机测试数据。这些数据可以是数字（整数，浮点数，实数等），字符串，甚至是不同种类的数据结构，如列表，元组和映射。
 
-`property "calling Enum.uniq/1 twice has no effect" do`
-`forall l <- list(int) do`
-`ensure l |> Enum.uniq == l |> Enum.uniq |> Enum.uniq`
-`end``end`
-Running this property will pass all tests. Of course, these six are not the only ones, but they are a good starting point. The next piece of the puzzle is generators. Let’s get right to it.
+在本节中，我们将探索默认情况下可用的生成器。然后，我们将学习如何创建自己的自定义生成器。
 
+11.1.5     内置生成器
 
-11.1.4     Generators
+QuickCheck预装了一堆生成器/生成器组合器。表11.1列出了你可能会遇到的一些更常见的：
 
-
-Generators are used to generate random test data for our QuickCheck properties. These data could be numbers (integers, floats, real numbers etc.), strings, and even different kinds of data structures like lists, tuples and maps.
-
-
-In this section, we will explore the generators that are available to us by default. Then, we will learn how to create our own custom generators.
-
-
-11.1.5     Built-in Generators
-
-
-QuickCheck comes pre-shipped with a bunch of generators/generator combinators. Table 11.1 lists some of the more common ones that you would encounter:
-
-
-
-
-|  |  |
+| 生成器/组合器 | 描述 |
 | --- | --- |
-| 
-Generator/ Combinator
- | 
-Description
- |
-|
-`binary/0`
-| Generates a binary of random size. |
-|
-`binary/1`
-| Generates a binary of a given size in bytes. |
-|
-`bool/0`
-| Generates a random Boolean. |
-|
-`char/0`
-| Generates a random character. |
-|
-`choose/2`
-| Generates a number in the range M to N. |
-|
-`elements/1`
-| Generates an element of the list argument. |
-|
-`frequency/1`
-| Makes a weighted choice between the generators in its argument, such that the probability of choosing each generator is proportional to the weight paired with it. |
-|
-`list/1`
-| Generates a list of elements generated by its argument. |
-|
-`map/2`
-| Generates a map with keys generated by K and values generated by V. |
-|
-`nat/0`
-| Generates a small natural number (bounded by the generation size). |
-|
-`non_empty/1`
-| Make sure that the generated value is not empty. |
-|
-`oneof/1`
-| Generates a value using a randomly chosen element of the list of generators. |
-|
-`orderedlist/1`
-| Generates an ordered list of elements generated by G. |
-|
-`real/0`
-| Generates a real number. |
-|
-`sublist/1`
-| Generate a random sub-list of the given list. |
-|
-`utf8/0`
-| Generates a random utf8 binary. |
-|
-`vector/2`
-| Generates a list of the given length, with elements generated by G. |
+| `binary/0` | 生成随机大小的二进制。 |
+| `binary/1` | 生成给定大小（以字节为单位）的二进制。 |
+| `bool/0` | 生成一个随机布尔值。 |
+| `char/0` | 生成一个随机字符。 |
+| `choose/2` | 生成范围在M到N的数字。 |
+| `elements/1` | 生成列表参数的一个元素。 |
+| `frequency/1` | 在其参数中的生成器之间进行加权选择，使得选择每个生成器的概率与其配对的权重成正比。 |
+| `list/1` | 生成由其参数生成的元素的列表。 |
+| `map/2` | 生成一个映射，其中键由K生成，值由V生成。 |
+| `nat/0` | 生成一个小的自然数（受生成大小的限制）。 |
+| `non_empty/1` | 确保生成的值不为空。 |
+| `oneof/1` | 使用列表生成器的随机选择的元素生成一个值。 |
+| `orderedlist/1` | 生成由G生成的元素的有序列表。 |
+| `real/0` | 生成一个实数。 |
+| `sublist/1` | 生成给定列表的随机子列表。 |
+| `utf8/0` | 生成一个随机utf8二进制。 |
+| `vector/2` | 生成一个给定长度的列表，其中的元素由G生成。 |
 
+表11.1 QuickCheck附带的生成器和生成器组合器的列表
 
-Table 11.1 A list of generator and generator combinators that come with QuickCheck
+你已经在前面的例子中看到了生成器的应用。以下是使用生成器的一些其他示例。
 
+示例：指定列表的尾部
 
-You have already seen generators in action in the previous examples. Here are some other examples on using generators.
-
-
-Example: Specifying the Tail of a List
-
-
-How would we write a specification for getting the tail of a list? As a refresher, this is what
+我们如何为获取列表的尾部编写规范呢？作为一个复习，这就是
 `tl/1`
-does:
+的作用：
 
+清单 11.11 tl/1 获取列表的尾部
 
-Listing 11.11 tl/1 gets the tails of the list
+```elixir
+iex> h tl
+def tl(list)
 
-`iex> h tl`
-`def tl(list)`
+返回一个列表的尾部。如果列表为空，则引发ArgumentError。
 
-`Returns the tail of a list. Raises ArgumentError if the list is empty.`
- 
-`Examples`
+示例
 
-`┃ iex> tl([1, 2, 3, :go])``┃ [2, 3, :go]`
-The representation of a non-empty list, it is
-`[head|tail]`, where
+┃ iex> tl([1, 2, 3, :go])``┃ [2, 3, :go]
+```
+非空列表的表示形式是
+`[head|tail]`，其中
 `head`
-is the first element of the list and
-`tail`
-is a smaller list not including the head. With this definition in mind, we can therefore define the property as such:
+是列表的第一个元素，`tail`
+是一个不包含头部的较小列表。有了这个定义，我们就可以定义属性了：
 
+清单 11.12 获取列表尾部的属性
 
-Listing 11.12 Property for getting the tail of the list
+```elixir
+property "tail of list" do
+forall l <- list(int) do
+[_head|tail] = l
+ensure tl(l) == tail
+end
+end
+```
+让我们试试看会发生什么。
 
-`property "tail of list" do`
-`forall l <- list(int) do`
-`[_head|tail] = l`
-`ensure tl(l) == tail`
-`end``end`
-Let’s try this out and see what happens.
+```elixir
+1) test Property tail of list (ListsEQC)
+test/lists_eqc.exs:11
+forall(l <- list(int)) do
+[_ | tail] = l
+ensure(tl(l) == tail)
+end
+Failed for []
+```
+哎呀！原来，QuickCheck找到了一个反例——空列表！这正好，因为如果你回头看看
+`tl/1`的定义，它会在列表为空时引发
+`ArgumentError`。换句话说，我们应该纠正我们的属性。
 
-`1) test Property tail of list (ListsEQC)`
-`test/lists_eqc.exs:11`
-`forall(l <- list(int)) do`
-`[_ | tail] = l`
-`ensure(tl(l) == tail)`
-`end``Failed for []`
-Whoops! Turns out, QuickCheck has found a counterexample – the empty list! And that is spot on, because if you were to look back at the definition of
-`tl/1`, it raises
-`ArgumentError`
-if the list is empty. In order words, we should correct our property.
-
-
-We can try using
+我们可以尝试使用
 `implies/1`
-to add a precondition to our property. This precondition here will always make sure that the generated list is empty. Let’s set the precondition where we only want *non-empty* lists:
+为我们的属性添加一个前提条件。这里的前提条件将始终确保生成的列表为空。让我们设置前提条件，我们只想要*非空*的列表：
 
+清单 11.13 使用 implies/2 设置生成列表的前提条件
 
-Listing 11.13 Using implies/2 to set a precondition for the generated lists
-
-`property "tail of list" do`
-`forall l <- list(int) do`
-`implies l != [] do`
-`[_head|tail] = l`
-`ensure tl(l) == tail`
-`end`
-`end``end`
-This time when we run the test, all the tests pass, but we see something slightly different:
+```elixir
+property "tail of list" do
+forall l <- list(int) do
+implies l != [] do
+[_head|tail] = l
+ensure tl(l) == tail
+end
+end
+end
+```
+这次当我们运行测试时，所有的测试都通过了，但我们看到了一些稍微不同的东西：
 
 `xxxxxxxxxx.xxxxx.xx...x...x...xxx.xx..x....x.........x....x.............x..x........................(x10)...(x1)xxxxx`
 `OK, passed 100 tests`
-The crosses (`x`) indicate that some tests been discarded because these tests have failed the post-condition. Ideally, you do not want test cases to be discarded. We can instead express it different and make sure that our generated list is always non-empty. In QuickCheck, we can easily add a generator combinator and therefore get rid of
-`implies/1`:
+交叉符号（`x`）表示一些测试已经被丢弃，因为这些测试没有通过后置条件。理想情况下，你不希望测试用例被丢弃。我们可以用不同的方式表达，确保我们生成的列表总是非空的。在QuickCheck中，我们可以很容易地添加一个生成器组合器，因此摆脱
+`implies/1`：
 
+清单 11.14 使用 non\_empty/1 明确生成非空列表
 
-Listing 11.14 Using non\_empty/1 to explicitly generate non-empty lists
-
-`property "tail of list" do`
-`forall l <- non_empty(list(int)) do`
-`[_head|tail] = l`
-`ensure tl(l) == tail`
-`end``end`
-This time, *none* of the test cases were discarded:
+```elixir
+property "tail of list" do
+forall l <- non_empty(list(int)) do
+[_head|tail] = l
+ensure tl(l) == tail
+end
+end
+```
+这次，*没有*测试用例被丢弃：
 
 `.................................................................................................... OK, passed 100 tests`
-Example: Specifying List Concatenation
+示例：指定列表连接
 
-
-So far, we have only used one generator. Sometimes, that is not enough. Say we want to test
-`Enum.concat/2`. A straightforward way would be to test
+到目前为止，我们只使用了一个生成器。有时候，这是不够的。假设我们想要测试
+`Enum.concat/2`。一个直接的方法是测试
 `Enum.concat/2`
-against the built-in
+对比内置的
 `++`
-operator that does the same thing. This requires two lists:
+操作符，它们做的事情是一样的。这需要两个列表：
 
+清单 11.15 使用多个生成器
 
-Listing 11.15 Using more than one generator
+```elixir
+property "list concatenation" do
+forall {l1, l2} <- {list(int), list(int)} do
+ensure Enum.concat(l1, l2) == l1 ++ l2
+end
+end
+```
+在下一节中，我们将看到如何定义我们自己的自定义生成器。你会发现QuickCheck足够表达，可以产生我们需要的任何类型的数据。
 
-`property "list concatenation" do`
-`forall {l1, l2} <- {list(int), list(int)} do`
-`ensure Enum.concat(l1, l2) == l1 ++ l2`
-`end``end`
-In the next section, we will see how to define our own custom generators. You will find that QuickCheck is expressive enough to produce any kind of data we need.
+11.1.6     创建自定义生成器
 
+我们一直在使用的所有生成器都是内置的。然而，我们同样可以轻松地创建自己的生成器。为什么要费这个劲呢？有时候，你希望QuickCheck生成的随机数据具有某些特性。
 
-11.1.6     Creating Custom Generators
+示例：指定字符串分割
 
+假设我们想要测试
+`String.split/2`。这个函数接受一个字符串和一个分隔符，并根据分隔符分割字符串。例如：
 
-All the generators we have been using are built-in. However, we can just as easily create our own generators. Why go through the trouble though? Sometimes, you want the random data that QuickCheck generates to have certain characteristics.
-
-
-Example: Specifying String Splitting
-
-
-Let’s say we wanted to test
-`String.split/2`. This function takes a string and a delimiter, and splits the string based on the delimiter. For example:
-
-`iex(1)> String.split("everything|is|awesome|!", "|")`
-`["everything", "is", "awesome", "!"]`
-Step back and think for a moment how we might write a property for
-`String.split/2`. One way would be to test the *inverse* of a string. Given a function
+```elixir
+iex(1)> String.split("everything|is|awesome|!", "|")
+["everything", "is", "awesome", "!"]
+```
+退后一步，思考一下我们可能如何为
+`String.split/2`编写一个属性。一种方法是测试字符串的*逆向*。给定一个函数
 `f(x)`
-and it’s *inverse*,
-`f-1(x)`, then we can say that:
+和它的*逆向*，
+`f-1(x)`，那么我们可以说：
 
+![](../../images/11_F1.png)  
 
-![](../images//11_F1.png)  
+这意味着，当你对一个值应用一个函数，然后对结果值应用逆函数，你会得到原始值。
 
+在这种情况下，使用分隔符分割字符串的逆操作是*连接*分割的结果和相同的分隔符。为此，我们编写了一个快速的辅助函数join，它接受分割操作的标记化结果和分隔符：
 
+```elixir
+def join(parts, delimiter) do
+parts |> Enum.intersperse([delimiter]) |> Enum.join
+end
+```
+这是一个例子：
 
-This means that when you apply a function to value, and then you apply the inverse function to the resulting value, you get back the original value.
+```elixir
+iex> join(["everything", "is", "awesome", !], [?|])
+"everything|is|awesome|!"
+```
+有了这个，我们就可以为
+`String.split/2`编写一个属性：
 
+清单 11. 16 使用相同的分隔符分割和连接字符串是逆操作
 
-In this case, the inverse operation of splitting a string using a delimiter is *joining* the result of the splitting with that same delimiter. For this, we write a quick helper function called join that takes the tokenized result from the split operation and the delimiter:
+```elixir
+defmodule StringEQC do
+use ExUnit.Case
+use EQC.ExUnit
 
-`def join(parts, delimiter) do`
-`parts |> Enum.intersperse([delimiter]) |> Enum.join``end`
-Here’s an example:
+property "splitting a string with a delimiter and joining it again yields the same string" do
+forall s <- list(char) do
+s = to_string(s)
+ensure String.split(s, ",") |> join(",") == s
+end
+end
 
-`iex> join(["everything", "is", "awesome", !], [?|])`
-`"everything|is|awesome|!"`
-With this, we can write a property for
-`String.split/2`:
-
-
-Listing 11. 16 Splitting and joining a string with the same delimiter are inverse operations
-
-`defmodule StringEQC do`
-`use ExUnit.Case`
-`use EQC.ExUnit`
-
-`property "splitting a string with a delimiter and joining it again yields the same string" do`
-`forall s <- list(char) do`
-`s = to_string(s)`
-`ensure String.split(s, ",") |> join(",") == s`
-`end`
-`end`
-
-`defp join(parts, delimiter) do`
-`parts |> Enum.intersperse([delimiter]) |> Enum.join`
-`end`
-`end`
-
+defp join(parts, delimiter) do
+parts |> Enum.intersperse([delimiter]) |> Enum.join
+end
+end
+```
 `to\_string`
-on character lists
+在字符列表上
 
-
-
-Notice the use of
-`to\_string/1`. This function is used to converts the argument to a string according to the
+注意使用
+`to\_string/1`。这个函数用于将参数转换为字符串，根据
 `String.Chars`
-*protocol*. Protocols are not covered in this book, but the point is we must massage the list of characters into a format that
+*协议*。本书没有涉及协议，但关键是我们必须将字符列表转换为
 `String.split/2`
-can understand.
+可以理解的格式。
 
+然而，有一个小问题。QuickCheck实际上生成包含逗号的字符串的概率是多少呢？让我们用
+`collect/2`
+来找出答案：
 
+清单 11. 17 使用 collect/2，我们可以看到生成数据的分布
 
- 
+```elixir
+property "splitting a string with a delimiter and joining it again yields the same string" do
+forall s <- list(char) do
+s = to_string(s)
+collect string: s, in:                           #1
+ensure String.split(s, ",") |> join(",") == s  #1
+end
+end
+```
+#1: `collect`
+宏报告生成数据的统计信息
 
-
-
-There’s a tiny problem though. What is the probability that QuickCheck actually generates a string that contains commas? Let’s find out with
-`collect/2`:
-
-
-Listing 11. 17 With collect/2, we can see a distribution of the generated data
-
-`property "splitting a string with a delimiter and joining it again yields the same string" do`
-`forall s <- list(char) do`
-`s = to_string(s)`
-`collect string: s, in:                           #1`
-`ensure String.split(s, ",") |> join(",") == s  #1`
-`end``end`
-#1: The
-`collect`
-macro reports statistics of the generated data
-
-
-Here’s a snippet of the output from
-`collect/2`:
+这是
+`collect/2`
+输出的一部分：
 
 `1% <<"Ã‚Â¡N?Ã‚Â½W.E">>`
 `1% <<121,6,53,194,189,5>>`
@@ -727,86 +600,80 @@ Here’s a snippet of the output from
 `1% <<102,7,112>>`
 `1% <<"f">>`
 `1% <<98,75,6,194,154>>``1% <<"\\Ã‚Â¯\e">>`
-Even if you were to inspect the entire generated data set, you would be hard pressed to find anything with a comma. How hard pressed exactly? QuickCheck has
+即使你检查整个生成的数据集，你也很难找到包含逗号的东西。到底有多难呢？QuickCheck有
 `classify/3`
-for that:
+可以解决这个问题：
 
+清单 11.18 classify/3 对生成的数据运行一个布尔函数
 
-Listing 11.18 classify/3 runs a Boolean function against the generated data
-
-`property "splitting a string with a delimiter and joining it again yields the same string" do`
-`forall s <- list(char) do`
-`s = to_string(s)`
-`:eqc.classify(String.contains?(s, ","),`
-`:string_with_commas,`
-`ensure String.split(s, ",") |> join(",") == s)`
-`end``end`
+```elixir
+property "splitting a string with a delimiter and joining it again yields the same string" do
+forall s <- list(char) do
+s = to_string(s)
+:eqc.classify(String.contains?(s, ","),
+:string_with_commas,
+ensure String.split(s, ",") |> join(",") == s)
+end
+end
+```
 `classify/3`
-runs a Boolean function again the generate string input and property, and displays the result. In this case, it reports:
+对生成的字符串输入和属性运行一个布尔函数，并显示结果。在这种情况下，它报告：
 
 `....................................................................................................`
 `OK, passed 100 tests`
 `1% string_with_commas`
-While all the tests pass, only a paltry *one percent* of the data has commas. Since we only have a hundred tests, only *one* string that was generated had one or more commas.
+虽然所有的测试都通过了，但只有微不足道的*一百分之一*的数据有逗号。由于我们只有一百个测试，所以只有*一个*生成的字符串有一个或多个逗号。
 
-
-What we really want is to generate *more* strings that have *more* commas. Luckily for us, QuickCheck gives us the tools to do just that. The end result is to be able to express the property like this, where
+我们真正想要的是生成*更多*包含*更多*逗号的字符串。幸运的是，QuickCheck给了我们这样做的工具。最终的结果是能够表达这样的属性，其中
 `string_with_commas`
-is our custom generator that we are going to implement next.
+是我们接下来要实现的自定义生成器。
 
-`property "splitting a string with a delimiter and joining it again yields the same string" do`
-`forall s <- string_with_commas do`
-`s = to_string(s)`
-`ensure(String.split(s, ",") |> join(",") == s)`
-`end``end`
-Example: Generating Strings with Commas
+```elixir
+property "splitting a string with a delimiter and joining it again yields the same string" do
+forall s <- string_with_commas do
+s = to_string(s)
+ensure(String.split(s, ",") |> join(",") == s)
+end
+end
+```
+示例：生成包含逗号的字符串
 
+让我们为我们的列表提出一些要求。
 
-Let’s come up with a few requirements for our list.
+1.  它的长度必须在1到10个字符之间
+2.  字符串应该包含小写字母
+3.  字符串应该包含逗号
+4.  逗号应该比字母出现得少
 
-
-1.   It has to be between 1 to 10 characters long
-
-
-2.   The string should contain lowercase alphabets
-
-
-3.   The string should contain commas
-
-
-4.   Commas should appear less frequently than alphabets
-
-
-Let’s tackle the first thing on the list. When using the
+让我们解决列表中的第一件事。当使用
 `list/1`
-generator, we do not have control of the length of the list. For that, we have to use the
+生成器时，我们无法控制列表的长度。为此，我们必须使用
 `vector/2`
-generator, which accepts a length and a generator.
+生成器，它接受一个长度和一个生成器。
 
+在
+`lib`中创建一个新文件
+`eqc_gen.ex`。让我们从我们的第一个自定义生成器开始：
 
-Create a new file called
-`eqc_gen.ex`
-in
-`lib`. Let’s start with the our first custom generator:
+清单 11. 19 vector/2 生成指定长度的列表
 
+```elixir
+defmodule EQCGen do
+use EQC.ExUnit
 
-Listing 11. 19 vector/2 generates a list with a specified length
-
-`defmodule EQCGen do`
-`use EQC.ExUnit`
-
-`def string_with_fixed_length(len) do`
-`vector(len, char)`
-`end`
-`end`
-Then open an
+def string_with_fixed_length(len) do
+vector(len, char)
+end
+end
+```
+然后用
+`iex -S mix`打开一个
 `iex`
-session with
-`iex -S mix`. We can get a sample of what QuickCheck might generate with
-`:eqc_gen.sample/1`:
+会话。我们可以用
+`:eqc_gen.sample/1`获取QuickCheck可能生成的样本：
 
 `iex> :eqc_gen.sample(EQCGen.string_with_fixed_length(5))`
-Here’s a possible output:
+这是一个可能的输出：
 
 `[170,246,255,153,8]`
 `"ñísJ£"`
@@ -818,64 +685,51 @@ Here’s a possible output:
 `[58,51,129,71,177]`
 `"æ¿q5º"``"C°{Sð"`
 
-String Representation
+字符串表示
 
+请记住，字符串在内部是字符列表，字符可以用整数表示。
 
+生成固定长度的字符串并不好玩。有了
+`choose/2`，我们可以引入一些变化。
 
-Recall that strings internally are lists of characters, and characters can be represented using integers.
+清单 11.20 choose/2 返回一个随机数，我们可以在 vector/2 中使用它来生成不同长度的列表
 
-
-
- 
-
-
-
-Generating fixed-length strings is no fun. With
-`choose/2`, we can introduce some variation.
-
-
-Listing 11.20 choose/2 returns a random number that we can use in vector/2 to generate lists of varying lengths
-
-`def string_with_variable_length do`
-`let len <- choose(1, 10) do`
-`vector(len, char)`
-`end``end`
-The use of
+```elixir
+def string_with_variable_length do
+let len <- choose(1, 10) do
+vector(len, char)
+end
+end
+```
+这里使用
 `let/2`
-here is important.
+很重要。
 `let/2`
-binds the generated value for use with another generator. In other words, this *will not* work:
+将生成的值绑定用于另一个生成器。换句话说，这*不会*起作用：
 
+清单 11.21 使用 choose/2 的错误方式。记住 choose/2 也是一个生成器。
 
-Listing 11.21 The wrong way of using choose/2. Remember that choose/2 is a generator too.
+```elixir
+# 注意：这不起作用！
+def string_with_variable_length do
+vector(choose(1, 10), char)
+end
+```
+那是因为vector/1的第一个参数应该是一个整数，而不是一个生成器。
 
-`# NOTE: This doesn’t work!`
-`def string_with_variable_length do`
-`vector(choose(1, 10), char)``end`
-That’s because the first argument of vector/1 should be an integer, not a generator.
+提示：你不必重新启动 iex 会话
 
-
-
-Tip: You do not have to restart the iex session
-
-
-
-Instead you can recompile and reload the specified module’s source file. Therefore, after we have added the new generator, we can reload
-`EQCGen`
-directly from the session:
+相反，你可以重新编译并重新加载指定模块的源文件。因此，在我们添加了新的生成器后，我们可以直接从会话中重新加载
+`EQCGen`：
 
 `iex(1)> r(EQCGen)`
 `lib/eqc\_gen.ex:1: warning: redefining module EQCGen`
 `{:reloaded, EQCGen, [EQCGen]}`
 
- 
-
-
-
-Try running
+ 尝试运行
 `:eqc_gen.sample/1`
-against
-`string_with_variable_length`:
+针对
+`string_with_variable_length`：
 
 `iex(1)> :eqc_gen.sample(EQCGen.string_with_variable_length)`
 `"ß"`
@@ -888,22 +742,21 @@ against
 `[184,203,190,93,158,29,250]`
 `"vp\vwSçú"`
 `[186,128,49]``[247,158,120,140,113,186]`
-It works! There are no empty lists, and the longer list has ten elements in them. Now, to tackle the second requirement: The generated string should only contain lower-case characters. The key here is to limit the values that are generated in the string. Currently, we are allowing *any* character (including UTF–8) to be part of the string:
+它有效！没有空列表，更长的列表中有十个元素。现在，来解决第二个要求：生成的字符串应该只包含小写字符。关键在于限制字符串中生成的值。目前，我们允许*任何*字符（包括UTF–8）成为字符串的一部分：
 
 `vector(len, char)`
-To do what we want, we can use the
+为了达到我们的目标，我们可以使用
 `oneof/1`
-generator that randomly picks an element from a list of generators. In this case, we only need to supply a single list containing lowercased alphabets. Note that we are using the Erlang
+生成器，它从生成器列表中随机选择一个元素。在这种情况下，我们只需要提供一个包含小写字母的单一列表。注意我们使用Erlang的
 `:lists.seq/2`
-function to generate a sequence of lowercased alphabets:
+函数来生成小写字母的序列：
 
 `vector(len, oneof(:lists.seq(?a, ?z)))`
-Reloading the module and running
-`eqc_gen.sample/1`
-again:
+重新加载模块并再次运行
+`eqc_gen.sample/1`：
 
 `iex> :eqc_gen.sample(EQCGen.string_with_variable_length)`
-We get a taste of what QuickCheck might generate:
+我们得到了QuickCheck可能生成的一些样本：
 
 `"kcra"`
 `"iqtg"`
@@ -915,36 +768,35 @@ We get a taste of what QuickCheck might generate:
 `"nugzrdgon"`
 `"tcopskokv"`
 `"wgddqmaq"``"lexsbkosce"`
-Nice! How do we have commas as part of the generated string? A naive way would be to simply add the comma character as part of the generated string:
+很好！我们如何在生成的字符串中包含逗号呢？一种天真的方法是简单地将逗号字符作为生成的字符串的一部分：
 
 `vector(len, oneof(:lists.seq(?a, ?z) ++ [?,]))`
-The problem with this approach is that we cannot control how many times the comma appears. We can fix this using
-`frequency/1`. It is easier to show how
-`frequency/1`
-is used before explaining:
+这种方法的问题在于我们无法控制逗号出现的次数。我们可以使用
+`frequency/1`来修复这个问题。在解释之前，先展示一下如何使用
+`frequency/1`：
 
-
-Listing 11.22 Using frequency/1 to control how often a value is generated
+清单 11.22 使用 frequency/1 控制生成值的频率
 
 `vector(len,frequency([{3, oneof(:lists.seq(?a, ?z))},`
 `{1, ?,}]))`
-When we express it like that, a lower-case alphabet will be generated 75% of the time, while a comma will be generated 25% of the time. Here’s the final result:
+当我们这样表达时，小写字母将被生成75%的时间，而逗号将被生成25%的时间。这是最终的结果：
 
+清单 11.23 使用 frequency/1 增加生成的结果字符串中逗号的概率
 
-Listing 11.23 Using frequency/1 to increase the probability of commas being generated in the resulting string
-
-`def string_with_commas do`
-`let len <- choose(1, 10) do`
-`vector(len, frequency([{3, oneof(:lists.seq(?a, ?z))},`
-`{1, ?,}]))`
-
-`end`
-`end``end`
-Reload the module and run
-`eqc_gen.sample/1`:
+```elixir
+def string_with_commas do
+let len <- choose(1, 10) do
+vector(len, frequency([{3, oneof(:lists.seq(?a, ?z))},
+{1, ?,}]))
+end
+end
+end
+```
+重新加载模块并运行
+`eqc_gen.sample/1`：
 
 `iex> :eqc_gen.sample(EQCGen.string_with_commas)`
-Here’s a sample of the generated data:
+这是生成数据的一个样本：
 
 `"acrn"`
 `",,"`
@@ -956,132 +808,111 @@ Here’s a sample of the generated data:
 `",mpih,vjsq"`
 `"swz"`
 `"n,,yc,"``"jlvmh,g"`
-Much better! Now, let’s use our newly minted generator:
+好多了！现在，让我们使用我们新铸造的生成器：
 
+清单 11. 24 使用我们新的生成器，生成包含（更多）逗号的字符串
 
-Listing 11. 24 Using our new generator that generates string with (more) commas
+```elixir
+property "splitting a string with a delimiter and joining it again yields the same string" do
+forall s <- EGCGen.string_with_commas do # 1
+s = to_string(s)
+:eqc.classify(String.contains?(s, ","),
+:string_with_commas,
+ensure String.split(s, ",") |> join(",") == s)
+end
+end
+```
+#1 使用我们新的生成器
 
-`property "splitting a string with a delimiter and joining it again yields the same string" do`
-`forall s <- EGCGen.string_with_commas do # 1`
-`s = to_string(s)`
-`:eqc.classify(String.contains?(s, ","),`
-`:string_with_commas,`
-`ensure String.split(s, ",") |> join(",") == s)`
-`end``end`
-#1 Using our new generator
-
-
-This time, the results are *much* better:
+这次，结果*好多了*：
 
 `....................................................................................................`
 `OK, passed 100 tests`
 `65% string_with_commas`
-Of course, if you are still not satisfied with the test data distribution, you are always in power to tweak the values yourself. It is always good practice to check the distribution of test data, especially when you data depend on certain characteristics such has having at least one comma. Here are a few example generators that you can try implementing:
+当然，如果你对测试数据的分布仍然不满意，你总是有权力自己调整值。检查测试数据的分布总是一种好习惯，特别是当你的数据依赖于某些特性，比如至少有一个逗号。以下是一些你可以尝试实现的生成器示例：
 
+·      DNA序列。DNA序列只包含A、T、G和C。例如：
+`ACGTGGTCTTAA`。
 
-·      A DNA sequence. A DNA sequence consists of only A’s, T’s, G’s and C’s. An example is
-`ACGTGGTCTTAA`.
-
-
-·      A Hexadecimal sequence. A Hexadecimal consists of 0 to 9, and the letters
+·      十六进制序列。十六进制包括0到9，以及字母
 `A`
-to
-`F`. An example is
+到
+`F`。例如：
 `0FF1CE`
-and
-`CAFEBEEF`.
+和
+`CAFEBEEF`。
 
+·      排序且唯一的数字序列。例如：
+`-4, 10, 12, 35, 100`。
 
-·      A sorted and unique sequence of numbers. For example:
-`-4, 10, 12, 35, 100`
+11.1.7     递归生成器
 
+让我们尝试一些*稍微*更具挑战性的事情。假设我们需要生成*递归*的测试数据。一个例子是JSON，其中JSON键的值可能是另一个JSON结构。另一个例子是树数据结构（我们将在下一节中看到）。
 
-11.1.7     Recursive Generators
+这就是我们需要*递归*生成器的时候。顾名思义，这些生成器会调用自己。在这个例子中，假设我们要为`List.flatten/1`编写一个属性，并且我们需要生成嵌套列表。
 
+然而，当使用递归解决问题时，你必须注意不要有无限递归。防止这种情况的方法是让递归调用的输入在每次调用时都变得*更小*，并且以某种方式达到一个终止条件。
 
-Let’s try our hand at something *slightly* more challenging. Suppose we need to generate *recursive* test data. An example is JSON, where the value of a JSON key could be yet another JSON structure. Another example is the tree data structure (which we will see in the next section).
+在QuickCheck中处理递归生成器的标准方法是使用`sized/2`。`sized/2`让你可以访问当前正在生成的测试数据的大小参数。我们可以使用这个参数来控制递归调用的输入大小。
 
+示例：生成任意嵌套的列表（使用List.flatten/2测试）
 
-This is when we need *recursive* generators. As its name suggests, these are generators that call themselves. In this example imagine that we are going to write a property for
-`List.flatten/1`, and we need to generate nested lists.
+举个例子。首先，我们将为我们的测试创建一个入口，以使用嵌套列表生成器：
 
+清单 11.25 sized/2 给我们提供了生成数据的大小参数的访问
 
-However, when solving problems with recursion, you must take care not to have infinite recursion. The way to prevent that is to have the input to the recursive calls to be *smaller* at each invocation, and reaching to a terminal condition somehow.
+```elixir
+defmodule EQCGen do
+use EQC.ExUnit
 
+def nested_list(gen) do
+sized size do
+nested_list(size, gen)
+end
+end
 
-The standard way to handle recursive generators in QuickCheck is to use
-`sized/2`.
-`sized/2`
-gives you access to the current size parameter of the test data currently being generated. We can use this parameter to therefore control the size of the input of the recursive calls.
+# nested_list/2 还未实现
+end
+```
+`nested_list/1`接受一个生成器作为参数，并将其传递给`sized/2`中的`nested_list/2`。`nested_list/2`接受两个参数。`size`是由`gen`生成的当前测试数据的大小，而第二个参数是生成器。
 
+我们现在需要实现`nested_list/2`。对于列表，有两种情况。列表要么是空的，要么不是。如果传入的大小为零，则应返回一个空列表：
 
-Example: Generating Arbitrarily Nested Lists (Test with List.flatten/2)
+清单 11. 26 实现 nested\_list/2 的空列表情况
 
+```elixir
+defmodule EQCGen do
+use EQC.ExUnit
 
-An example is in order. First, we will create an entry point for our tests to use the nested list generator:
+# nested/1 在这里
 
+defp nested_list(0, _gen) do
+[]
+end
+end
+```
+第二种情况是发生动作的地方：
 
-Listing 11.25 sized/2 gives us access to the size parameter of the generated data
+清单 11. 27 实现 nested\_list/2 的非空列表情况。这里是递归发生的地方。
 
-`defmodule EQCGen do`
-`use EQC.ExUnit`
+```elixir
+defmodule EQCGen do
+use EQC.ExUnit
 
-`def nested_list(gen) do`
-`sized size do`
-`nested_list(size, gen)`
-`end`
-`end`
+# nested/1 在这里
 
-`# nested_list/2 not implemented yet`
-`end`
-`nested_list/1`
-accepts a generator as an argument, and hands it to
-`nested_list/2`
-which is wrapped in
-`sized/2`.
-`nested_list/2`
-takes in two arguments.
-`size`
-is the size of the current test data to be generated by
-`gen`, while the second argument is the generator.
+# nested/2 空情况在这里
 
-
-We now need to implement
-`nested_list/2`. For lists, there are two cases. Either the list is empty, or not. An empty list should be returned if the size passed in is zero:
-
-
-Listing 11. 26 Implementing the empty list case of nested\_list/2
-
-`defmodule EQCGen do`
-`use EQC.ExUnit`
-
-`# nested/1 goes here`
-
-`defp nested_list(0, _gen) do`
-`[]`
-`end`
-`end`
-The second case is where the action happens:
-
-
-Listing 11. 27 Implementing the non-empty list case of nested\_list/2. Here is where the recursion happens.
-
-`defmodule EQCGen do`
-`use EQC.ExUnit`
-
-`# nested/1 goes here`
-
-`# nested/2 empty case goes here`
-
-`defp nested_list(n, gen) do`
-`oneof [[gen|nested_list(n-1, gen)],`
-`[nested_list(n-1, gen)]]`
-`end`
-`end`
-Let’s try it out with
+defp nested_list(n, gen) do
+oneof [[gen|nested_list(n-1, gen)],
+[nested_list(n-1, gen)]]
+end
+end
+```
+让我们用
 
 `iex(1)> :eqc_gen.sample EQCGen.nested_list(:eqc_gen.int)`
-Here are the results:
+试试看。这是结果：
 
 `[[-10,[-7,[9,[4,[[]]]]]]]`
 `[10,0,2,-3,[[-6,[[-2,-1]]]]]`
@@ -1094,990 +925,769 @@ Here are the results:
 `[18,[[[[[-8,-8,[3,[-12,[18,[13,[[]]]]]]]]]]]]`
 `[[-2,[[[-6,-17,3,[[-18,[[12,[[[13,1]]]]]]]]]]]]`
 `[[[[-15,[-17,[[[-16,[[[20,[[[17,10,[]]]]]]]]]]]]]]]``:ok`
-Hurray! We managed to generate a bunch of nested lists of integers. But did you notice that the generation took a *very* long time? The problem lies with this line:
+万岁！我们成功地生成了一堆嵌套的整数列表。但你有没有注意到生成过程花费了*很长*的时间？问题出在这一行：
 
 `oneof [[gen|nested_list(n-1, gen)],`
 `[nested_list(n-1, gen)]]`
-What is happening internally is that even though we are saying choose *either*
+发生的事情是，尽管我们说选择*要么*
 `[gen|nested_list(n-1, gen)]`
-or
-`[nested_list(n-1, gen)]`. What’s really happening is that *both* expressions are being evaluated, even when we only need one of them. What we need is to use *lazy evaluation*. Being lazy only evaluates the part of the
-`oneof/1`
-that we need. Fortunately, all we have to do is wrap a
-`lazy/1`
-around
-`oneof/1`:
+要么
+`[nested_list(n-1, gen)]`。实际上发生的是，即使我们只需要其中一个，*两个*表达式都被评估了。我们需要的是使用*惰性求值*。懒惰只评估我们需要的`oneof/1`的部分。
+
+幸运的是，我们只需要在 `oneof/1` 周围包裹一个 `lazy/1`：
+
+```elixir
+lazy do
+oneof [[gen|nested_list(n-1, gen)],
+[nested_list(n-1, gen)]]
+end
+```
+这是最终版本：
+
+```elixir
+defmodule EQCGen do
+use EQC.ExUnit
+
+def nested_list(gen) do
+sized size do
+nested_list(size, gen)
+end
+end
+
+defp nested_list(0, _gen) do
+[]
+end
+
+defp nested_list(n, gen) do
+lazy do
+oneof [[gen|nested_list(n-1, gen)],
+[nested_list(n-1, gen)]]
+end
+end
+end
+```
+这次，嵌套列表的生成速度飞快。为了让概念深入人心，我们将通过另一个例子。
+
+示例：生成平衡树
+
+在这个例子中，我们将学习如何构建一个生成*平衡树*的生成器。作为复习，平衡树的特点是：
+
+· 左右子树的高度相差最多为一
+
+· 左右子树都是平衡的
+
+和以前一样，我们首先创建入口点：
+
+```elixir
+defmodule EQCGen do
+use EQC.ExUnit
+
+def balanced_tree(gen) do
+sized size do
+balanced_tree(size, gen)
+end
+end
+
+# balanced_tree/2 not implemented yet
+end
+```
+树的终端节点是*叶节点*。这是树构造的基本情况：
+
+```elixir
+defmodule EQCGen do
+use EQC.ExUnit
+
+# balanced_tree/1 goes here
+
+def balanced_tree(0, gen) do
+{:leaf, gen}
+end
+end
+```
+注意我们用 `:leaf` 原子标记叶节点。接下来，我们需要实现节点*不是*叶子的情况：
+
+```elixir
+defmodule EQCGen do
+use EQC.ExUnit
+
+# balanced_tree/1 goes here
+
+# balanced_tree/2 leaf node case here
+
+def balanced_tree(n, gen) do
+lazy do
+{:node,
+gen,
+balanced_tree(div(n, 2), gen), # 1
+balanced_tree(div(n, 2), gen)} # 1
+end
+end
+end
+```
+#1: 每次递归调用都会将子树的大小减半
+
+对于非叶节点，我们用 `:node` 标记元组，然后是生成器的值。最后，我们递归调用 `balanced_tree/2` 两次：一次是左子树，一次是右子树。每次递归调用都会将生成的子树的大小*减半*。这确保我们最终会达到基本情况并终止。
+
+最后，我们用 `lazy/1` 包裹递归调用，以确保只在需要时调用递归调用。这是最终版本：
+
+```elixir
+defmodule EQCGen do
+use EQC.ExUnit
+
+def balanced_tree(gen) do
+sized size do
+balanced_tree(size, gen)
+end
+end
+
+def balanced_tree(0, gen) do
+{:leaf, gen}
+end
+
+def balanced_tree(n, gen) do
+lazy do
+{:node,
+gen,
+balanced_tree(div(n, 2), gen),
+balanced_tree(div(n, 2), gen)}
+end
+end
+end
+```
+我们可以生成一些带有整数生成器的平衡树：
+
+```elixir
+iex> :eqc_gen.sample EQCGen.balanced_tree(:eqc_gen.int)
+```
+这会给我们一个像这样的输出：
+
+```elixir
+{node,0,
+{node,8,
+{node,8,{node,8,{leaf,6},{leaf,-3}},{node,1,{leaf,5},{leaf,-7}}},
+{node,1,{node,-4,{leaf,8},{leaf,3}},{node,1,{leaf,-8},{leaf,7}}}},
+{node,-4,
+{node,6,{node,-1,{leaf,6},{leaf,10}},{node,5,{leaf,-6},{leaf,-3}}},{node,-4,{node,6,{leaf,3},{leaf,-1}},{node,2,{leaf,8},{leaf,8}}}}}
+```
+尝试生成这些递归结构：
 
+- 不平衡的树
+- JSON
 
-Listing 11. 28 lazy/1 only calls generators on demand
+11.1.8 QuickCheck总结
 
-`lazy do`
-`oneof [[gen|nested_list(n-1, gen)],`
-`[nested_list(n-1, gen)]]``end`
-Here’s the final version:
+QuickCheck的核心思想是编写你的代码的属性，并将测试用例的生成和属性的验证交给工具。一旦你提出了属性，工具就会处理剩下的部分，并可以轻松地生成数百到数千个测试用例。
 
+另一方面，这并非都是彩虹和独角兽——你需要自己思考属性。虽然思考属性确实需要你花费大量的思考，但收益是巨大的。通常，通过属性的思考过程会让你对代码有更深入的理解。
 
-Listing 11. 29 The final version of the nested list generator
+我们已经介绍了足够的基础知识，使你能够编写自己的QuickCheck属性和生成器。还有其他我们没有探索的（高级）领域，比如测试数据的缩小和状态机的验证。我会在本章的最后温和地指向一些资源。现在，我们来看看一个名字颇具野心的工具Concuerror的并发测试。
 
-`defmodule EQCGen do`
-`use EQC.ExUnit`
+11.2 Concuerror并发测试
 
-`def nested_list(gen) do`
-`sized size do`
-`nested_list(size, gen)`
-`end`
-`end`
+虽然Elixir中的actor并发模型消除了一整类的并发错误，但它绝不是银弹。引入并发错误仍然非常可能（而且非常容易）。在接下来的例子中，我挑战你只通过肉眼查看代码就找出并发错误。
 
-`defp nested_list(0, _gen) do`
-`[]`
-`end`
+通过传统的单元测试暴露并发错误也是非常困难的，如果不是完全不足的努力。Concuerror是一个系统地清除并发错误的工具。虽然它不能找到每一种并发错误，但它能揭示的错误是非常令人印象深刻的。
 
-`defp nested_list(n, gen) do`
-`lazy do`
-`oneof [[gen|nested_list(n-1, gen)],`
-`[nested_list(n-1, gen)]]`
-`end`
-`end`
-`end`
-This time, the generation of the nested lists zips right along. In order to let the concepts sink in, we will work through another example.
+我们将学习如何使用Concuerror并利用其能力来揭示难以发现的并发错误。我保证你会对结果感到惊讶。首先，我们需要安装Concuerror。
 
+11.2.1 安装Concuerror
 
-Example: Generating a Balanced Tree
+安装Concuerror很简单。以下是所需的步骤：
 
+```bash
+$ git clone https://github.com/parapluu/Concuerror.git
+$ cd Concuerror
+$ make
+MKDIR ebin
+GEN  src/concuerror_version.hrl
+DEPS src/concuerror_callback.erl
+ERLC src/concuerror_callback.erl
+…
+GEN  concuerror
+```
+输出的最后一行是Concuerror程序（一个Erlang脚本），为了方便，你可能希望将其包含到你的`PATH`中。
 
-In this example, we will learn to build a generator that spits out *balanced trees*. As a refresher, a balanced tree is such that:
+将`concuerror`添加到你的`PATH`
 
+在Unix系统中，这意味着添加一行像这样的内容：
 
-·      The left and right subtree’ heights differ by at most one
+```bash
+export PATH=$PATH:"/path/to/Concuerror"
+```
 
+11.2.2 设置项目
 
-·      The left and right subtree are both balanced
+创建一个新项目：
 
+```bash
+mix new concuerror_playground
+```
+接下来，打开 `mix.exs` 并确保你添加了粗体的行：
 
-As before, we first create the entry point:
+```elixir
+defmodule ConcuerrorPlayground.Mixfile do
+use Mix.Project
 
+def project do
+[app: :concuerror_playground,
+version: "0.0.1",
+elixir: "~> 1.2-rc",
+build_embedded: Mix.env == :prod,
+start_permanent: Mix.env == :prod,
+elixir_paths: elixirc_paths(Mix.env), #1
+test_pattern: "*_test.ex*",           #1
+warn_test_pattern: nil,               #1
+deps: deps]
+end
 
-Listing 11.30 The entry point to the balanced tree generator. Note the use of sized/2 again
+def application do
+[applications: [:logger]]
+end
 
-`defmodule EQCGen do`
-`use EQC.ExUnit`
+defp deps do
+[]
+end
 
-`def balanced_tree(gen) do`
-`sized size do`
-`balanced_tree(size, gen)`
-`end`
-`end`
+defp elixirc_paths(:test), do: ["lib", "test/concurrency"] #1
+defp elixirc_paths(_),     do: ["lib"]                     #1
+end
+```
+#1 这些行是为了让Concuerror测试得以编译。
+
+默认情况下，Elixir测试以 `.exs` 结尾。这意味着它们没有被编译。Concuerror不理解 `.exs` 文件（甚至 `.ex` 文件），因此，我们需要告诉Elixir将这些文件编译成 `.beam`。为了实现这一点，我们首先修改测试模式以接受 `.ex` 和 `.exs` 文件。我们还关闭了 `warn_test_pattern` 选项，该选项在 `test` 目录中有 `.ex` 文件时会发出警告。
+
+最后，我们添加两个 `elixirc_path/1` 函数并添加 `elixir_paths` 选项。这明确地告诉编译器我们希望将 `lib` 和 `test/concurrency` 中的文件都编译。
+
+在我们继续看示例之前，还有最后一点。Concuerror能够以有用的图表显示其输出。我们稍后会看到几个例子。
+
+输出是一个Graphviz `.dot` 文件。Graphviz是一个开源的图形可视化软件。它可以通过大多数包管理器或者通过<http://www.graphviz.org/>获取。确保Graphviz已经正确安装：
+
+```bash
+% dot -V dot - graphviz version 2.38.0 (20140413.2041)
+```
+11.2.3 Concuerror能检测的错误类型
+
+Concuerror是如何施展其魔力的呢？该工具对你的代码（通常以测试的形式）进行插桩，并知道哪些点可以进行进程交错。有了这个知识，它就可以系统地搜索并报告它能找到的任何错误。它可以检测到的一些与并发相关的错误包括：
+
+- 死锁
+- 竞态条件
+- 意外的进程崩溃
+
+在接下来的例子中，我们将看到Concuerror能够挑选出的错误类型。
+
+11.2.4 死锁
+
+当两个操作都在等待对方完成，因此都无法进行时，就会发生死锁。当Concuerror发现一个程序状态，其中一个或多个进程被阻塞在 `receive` 上，并且没有其他进程可用于调度时，它会认为该状态已经死锁。我们将看到两个这样的死锁例子。
+
+示例：Ping Pong（通信死锁）
+
+我们从一个简单的例子开始。在 `lib` 中创建 `ping_pong.ex`：
 
-`# balanced_tree/2 not implemented yet`
-`end`
-A terminal node of a tree is the *leaf node*. That is the base case of the tree construction:
+```elixir
+defmodule PingPong do
+
+def ping do
+receive do
+:pong -> :ok
+end
+end
 
+def pong(ping_pid) do
+send(ping_pid, :pong)
+receive do
+:ping -> :ok
+end
+end
+end
+```
+在 `test/concurrency` 中创建一个对应的测试文件，命名为 `ping_pong_test.ex`。让我们看看测试：
 
-Listing 11.31 The base case is when the size of the tree is zero
+```elixir
+Code.require_file "../test_helper.exs", __DIR__
+
+defmodule PingPong.ConcurrencyTest do
+import PingPong
 
-`defmodule EQCGen do`
-`use EQC.ExUnit`
+def test do
+ping_pid = spawn(fn -> ping end)
+spawn(fn -> pong(ping_pid) end)
+end
+end
+```
+测试本身非常简单。我们生成两个进程，一个运行 `ping/0` 函数，一个运行 `pong/1` 函数。`pong` 函数接收 `ping` 进程的pid。
 
-`# balanced_tree/1 goes here`
+与ExUnit测试相比，有一些细微的差别。再次注意，与我们通常的以 `.exs` 结尾的测试文件不同，我们通过Concuerror的并发测试需要被编译，因此必须以 `.ex` 结尾。此外，测试函数本身被命名为 `test/0`。
+
+你稍后会看到，Concuerror期望测试函数*没有元数*（没有参数）。此外，如果你没有明确提供测试函数名，它会自动寻找 `test/0`。运行测试稍微复杂一些。首先，我们需要编译测试：
 
-`def balanced_tree(0, gen) do`
-`{:leaf, gen}`
-`end`
-`end`
-Notice that we tag the leaf node with the
-`:leaf`
-atom. Next, we need to implement the case where the node is *not* a leaf:
+```bash
+% mix test
+```
+接下来，我们需要运行Concuerror。我们需要明确告诉Concuerror在哪里找到Elixir、ExUnit以及我们项目的编译后的二进制文件。我们通过指定路径（`--pa`）并指向相应的 `ebin` 目录来做到这一点：
+
+```bash
+concuerror --pa /usr/local/Cellar/elixir/HEAD/lib/elixir/ebin/ \
+--pa /usr/local/Cellar/elixir/HEAD/lib/ex_unit/ebin \
+--pa _build/test/lib/concuerror_playground/ebin     \
+-m Elixir.PingPong.ConcurrencyTest \
+--graph ping_pong.dot \--show_races true
+```
+然后我们需要告诉Concuerror确切的模块，使用 `-m` 标志。我们需要说 `Elixir.PingPong.ConcurrencyTest` 而不仅仅是 `PingPong.ConcurrencyTest`。`--graph` 告诉Concuerror生成Graphviz的输出可视化，`--show_races true` 告诉Concuerror突出显示竞态条件。
+
+此外，这里还有一个 `-t` 选项。这个 `-t` 选项和一个值一起告诉Concuerror要执行的测试函数。如前所述，它默认查找 `test/0`。如果你想指定自己的测试函数，那么你需要提供 `-t` 和相应的测试函数名。看看那！Concuerror找到了一个错误：
+
+```bash
+# ... output omitted
+Error: Stop testing on first error. (Check '-h keep_going').
 
+Done! (Exit status: warning)Summary: 1 errors, 1/1 interleaving explored
+```
+这是 `concuerror_report.txt` 的输出：
 
-Listing 11.32 Recursively calling generators in the non-base case version of balanced\_tree/2
+```bash
+Erroneous interleaving 1:
+* Blocked at a 'receive' (when all other processes have exited):
+P.2 in ping_pong.ex line 11
+--------------------------------------------------------------------------------
 
-`defmodule EQCGen do`
-`use EQC.ExUnit`
-
-`# balanced_tree/1 goes here`
-
-`# balanced_tree/2 leaf node case here`
-
-`def balanced_tree(n, gen) do`
-`lazy do`
-`{:node,`
-`gen,`
-`balanced_tree(div(n, 2), gen), # 1`
-`balanced_tree(div(n, 2), gen)} # 1`
-`end`
-`end`
-`end`
-#1: Each recursive call halves the size of the subtree
-
-
-For non-leaf nodes, we tag the tuple with
-`:node`
-followed by the value of the generator. Finally, we recursively call
-`balanced_tree/2`
-twice: One for the left subtree and one for the right subtree. Each recursive call *halves* the size of the generated subtree. This ensures that we eventually hit the base case and terminate.
-
-
-Finally, we wrap recursive calls with a
-`lazy/1`
-to make sure that the recursive calls are only invoked when needed. Here’s the final version:
-
-
-Listing 11.33 The final version of the balanced tree generator
-
-`defmodule EQCGen do`
-`use EQC.ExUnit`
-
-`def balanced_tree(gen) do`
-`sized size do`
-`balanced_tree(size, gen)`
-`end`
-`end`
-
-`def balanced_tree(0, gen) do`
-`{:leaf, gen}`
-`end`
-
-`def balanced_tree(n, gen) do`
-`lazy do`
-`{:node,`
-`gen,`
-`balanced_tree(div(n, 2), gen),`
-`balanced_tree(div(n, 2), gen)}`
-`end`
-`end`
-`end`
-We can generate a few balanced trees with integers as the generator:
-
-`iex> :eqc_gen.sample EQCGen.balanced_tree(:eqc_gen.int)`
-This gives us an output like:
-
-`{node,0,`
-`{node,8,`
-`{node,8,{node,8,{leaf,6},{leaf,-3}},{node,1,{leaf,5},{leaf,-7}}},`
-`{node,1,{node,-4,{leaf,8},{leaf,3}},{node,1,{leaf,-8},{leaf,7}}}},`
-`{node,-4,`
-`{node,6,{node,-1,{leaf,6},{leaf,10}},{node,5,{leaf,-6},{leaf,-3}}},``{node,-4,{node,6,{leaf,3},{leaf,-1}},{node,2,{leaf,8},{leaf,8}}}}}`
-Try your hand at generating these recursive structures:
-
-
-·      An unbalanced tree
-
-
-·      JSON
-
-
-11.1.8     Summary of QuickCheck
-
-
-The big idea of QuickCheck is write properties of your code, and leave the generation of the test cases and verification of the properties to the tool. Once you have come up with the properties, the tool handles the rest and can easily generate hundreds to thousands of test cases.
-
-
-On the other hand, it is not rainbows and unicorns — you need to think of the properties yourself. While thinking of the properties does involve a lot of thinking on your part, the benefits are huge. Often the process of thinking through the properties leaves you with a much better understanding of your code.
-
-
-We have covered enough of the basics so that you are able to write your own QuickCheck properties and generators. There are other (advanced) areas that we have no explored, such as shrinking of test data and verification of state machines. I will just gently point you to the resources at the end of this chapter. Now, we look at concurrency testing with a ambitiously named tool called Concuerror.
-
-
-11.2       Concurrency Testing with Concuerror
-
-
-While the actor concurrency model in Elixir eliminates a whole class of concurrency errors, it is by no means a silver bullet. It is still very possible (and very easy) to introduce concurrency bugs. In the examples that follow, I challenge you to figure out what the concurrency bugs are by simply eyeballing the code.
-
-
-Exposing concurrency bugs via traditional unit testing is also very difficult, if not woefully inadequate endeavor. Concuerror is a tool that systematically weeds out concurrency errors. While it cannot find every single kind of concurrency bug, the bugs that it can reveal are very impressive.
-
-
-We will learn how to use Concuerror and exploit its capabilities to reveal hard-to-find concurrency bugs. I guarantee you will be surprised with the results. First, we need to get Concuerror installed.
-
-
-11.2.1     Installing Concuerror
-
-
-Getting Concuerror installed is simple. Here are the steps required:
-
-`$ git clone https://github.com/parapluu/Concuerror.git`
-`$ cd Concuerror`
-`$ make`
-`MKDIR ebin`
-`GEN  src/concuerror_version.hrl`
-`DEPS src/concuerror_callback.erl`
-`ERLC src/concuerror_callback.erl`
-`…``GEN  concuerror`
-The last line of the output is the Concuerror program (an Erlang script) that, for convenience, you would want to include into your
-`PATH`.
-
-
-
-Add
-`concuerror`
-to your
-`PATH`
-
-
-
-On Unix systems, this means adding a line like
-
-``export PATH=$PATH:"/path/to/Concuerror"``
-
- 
-
-
-
-11.2.2     Setting Up the Project
-
-
-Create a new project:
-
-`mix new concuerror_playground`
-Next, open
-`mix.exs`
-and add make sure you add the lines in bold:
-
-
-Listing 11. 34 Setting up to use Concuerror
-
-`defmodule ConcuerrorPlayground.Mixfile do`
-`use Mix.Project`
-
-`def project do`
-`[app: :concuerror_playground,`
-`version: "0.0.1",`
-`elixir: "~> 1.2-rc",`
-`build_embedded: Mix.env == :prod,`
-`start_permanent: Mix.env == :prod,`
-`elixir_paths: elixirc_paths(Mix.env), #1`
-`test_pattern: "*_test.ex*",           #1`
-`warn_test_pattern: nil,               #1`
-`deps: deps]`
-`end`
-
-`def application do`
-`[applications: [:logger]]`
-`end`
-
-`defp deps do`
-`[]`
-`end`
-
-`defp elixirc_paths(:test), do: ["lib", "test/concurrency"] #1`
-`defp elixirc_paths(_),     do: ["lib"]                     #1``end`
-#1 These lines are needed so that Concuerror tests get compiled.
-
-
-By default, Elixir tests end with
-`.exs`. This means that they are not compiled. Concuerror doesn’t understand
-`.exs`
-files (or even
-`.ex`
-files for that matter), therefore, we need to tell Elixir to compile these files into
-`.beam`. For this to happen, we first modify the test pattern to accept
-`.ex`
-and
-`.exs`
-files. We also turn off the option for
-`warn_test_pattern`, which complains when there is a
-`.ex`
-file in the
-`test`
-directory.
-
-
-Finally, we add two
-`elixirc_path/1`
-functions and add the
-`elixir_paths`
-option. This explicitly tells the compile that we want the files in both
-`lib`
-and
-`test/concurrency`
-to be compiled.
-
-
-One last bit before we move on to the examples. Concuerror is able to display its output in a helpful diagram. We will see a few examples of this later.
-
-
-The output is a Graphviz
-`.dot`
-file. Graphviz is an open source graph visualization software. It is available for most package managers or can be obtained via <http://www.graphviz.org/>. Make sure that Graphviz has been properly installed:
-
-`% dot -V dot - graphviz version 2.38.0 (20140413.2041)`
-11.2.3     Types of Errors that Concuerror can Detect
-
-
-How does Concuerror perform its magic? The tool instruments your code (usually in the form of a test), and it knows which points process interleaving can happen. Armed with this knowledge, it systematically searches and reports for any errors it can find. Some of the concurrency-related errors it can detect are:
-
-
-·      Deadlocks
-
-
-·      Race conditions
-
-
-·      Unexpected process crashing
-
-
-·      In the examples that follow, we will see the kinds of errors that Concuerror can pick out.
-
-
-11.2.4     Deadlocks
-
-
-A deadlock happens when two actions are waiting for each other to finish, and therefore neither can make progress. When Concuerror finds a program state where one or more processes are blocked on a
-`receive`
-and no other process are available for scheduling, it will consider that state to be deadlocked. We will see two such examples of deadlocks.
-
-
-Example: Ping Pong (Communication Deadlock)
-
-
-We start with something simple. Create
-`ping_pong.ex`
-in
-`lib`:
-
-
-Listing 11. 35 Can you spot the deadlock?
-
-`defmodule PingPong do`
-
-`def ping do`
-`receive do`
-`:pong -> :ok`
-`end`
-`end`
-
-`def pong(ping_pid) do`
-`send(ping_pid, :pong)`
-`receive do`
-`:ping -> :ok`
-`end`
-`end`
-`end`
-Create a corresponding test file in
-`test/concurrency`
-and name it
-`ping_pong_test.ex`. Let’s see the test:
-
-
-Listing 11. 36 Implementing test/0 so that Concuerror can test PingPong
-
-`Code.require_file "../test_helper.exs", __DIR__`
-
-`defmodule PingPong.ConcurrencyTest do`
-`import PingPong`
-
-`def test do`
-`ping_pid = spawn(fn -> ping end)`
-`spawn(fn -> pong(ping_pid) end)`
-`end`
-`end`
-The test itself is pretty simple. We spawn two processes, one running the
-`ping/0`
-function and one running the
-`pong/1`
-function. The
-`pong`
-function takes the pid of the
-`ping`
-process.
-
-
-There are few slight differences compared to ExUnit tests. Notice once again that unlike our usual test files that end with
-`.exs`, our concurrency tests via Concuerror needs to be compiled and therefore must end with
-`.ex`. Besides that, the test function itself is named
-`test/0`.
-
-
-As you will see later on, Concuerror expects that test functions have *no arity* (no arguments). Additionally, if you do not explicitly supply the test function name, it automatically looks for
-`test/0`. Running the test is slightly involved. First, we need to compile the tests:
-
-`% mix test`
-Next, we need to run Concuerror. We need to explicitly tell Concuerror where to find the compiled binaries for Elixir, ExUnit and finally our project. We do that by specifying the paths (`--pa`) and pointing to the respective
-`ebin`
-directory:
-
-`concuerror --pa /usr/local/Cellar/elixir/HEAD/lib/elixir/ebin/ \`
-`--pa /usr/local/Cellar/elixir/HEAD/lib/ex_unit/ebin \`
-`--pa _build/test/lib/concuerror_playground/ebin     \`
-`-m Elixir.PingPong.ConcurrencyTest \`
-`--graph ping_pong.dot \``--show_races true`
-Then we need to tell Concuerror exactly which module using the
-`-m`
-flag. We need to say
-`Elixir.PingPong.ConcurrencyTest`
-instead of just
-`PingPong.ConcurrencyTest`.
-`--graph`
-tells Concuerror to generate a Graphviz visualization of the output and
-`--show_races true`
-tells Concuerror to highlight race conditions.
-
-
-There is also the
-`-t`
-option that isn’t shown in here. This
-`-t`
-option along with a value tells Concuerror the test function to execution. As mentioned previously, it looks for
-`test/0`
-by default. If you want to specify your own test function, then you would need to supply
-`-t`
-and the corresponding test function name. Look at that! Concuerror found us an error:
-
-`# ... output omitted`
-`Error: Stop testing on first error. (Check '-h keep_going').`
-
-`Done! (Exit status: warning)``Summary: 1 errors, 1/1 interleaving explored`
-Here’s the output of
-`concuerror_report.txt`:
-
-`Erroneous interleaving 1:`
-`* Blocked at a 'receive' (when all other processes have exited):`
-`P.2 in ping_pong.ex line 11`
-`--------------------------------------------------------------------------------`
-
-`Interleaving info:`
-`1: P: P.1 = erlang:spawn(erlang, apply, [#Fun<'Elixir.PingPong.ConcurrencyTest'.'-test/0-fun-0-'.0>,[]])`
-`in erlang.erl line 2497`
-`2: P: P.2 = erlang:spawn(erlang, apply, [#Fun<'Elixir.PingPong.ConcurrencyTest'.'-test/0-fun-1-'.0>,[]])`
-`in erlang.erl line 2497`
-`3: P: exits normally`
-`4: P.2: pong = erlang:send(P.1, pong)`
-`in ping_pong.ex line 10`
-`5: Message (pong) from P.2 reaches P.1`
-`6: P.1: receives message (pong)`
-`in ping_pong.ex line 4`
-`7: P.1: exits normally`
-
-`Done! (Exit status: warning)``Summary: 1 errors, 1/1 interleaving explored`
-You might be wondering what are
-`P`,
-`P.1`
-and
-`P.2`.
-`P`
-is the parent process.
-`P.1`
-is the first process spawned by the parent process and
-`P.2`
-is the second process spawned by the parent process. Now, let’s tell Concuerror to generate a visualization of the interleaving:
-
-`% dot -Tpng ping_pong.dot > ping_pong.png`
-`ping_pong.png`
-looks like:
-
-
-![](../images//11_3.png)  
-
-
-
-Figure 11. 3 Concuerror showing us a blocked process
-
-
-The numbered lines on the report correspond with the numbers on the image. It helps also to view the image *and* the report side by side to piece together the events leading up to the problem. Its like playing detective and piecing together the clues of a crime scene! This time, the crime scene is a GenServer program.
-
-
-Example: GenServer doing sync call to itself in another sync call
-
-
-OTP behaviors shield us from many potential concurrency bugs, but it is very possible to shoot yourself in the foot. This next example showcases an example of how to do exactly that. In other words, don’t try this at home:
-
-
-Listing 11. 37 The complete implementation of a shady Stack GenServer
-
-`defmodule Stacky do`
-`use GenServer`
-`require Integer`
-
-`@name __MODULE__`
-
-`def start_link do`
-`GenServer.start_link(__MODULE__, :ok, name: @name)`
-`end`
-
-`def add(item) do`
-`GenServer.call(@name, {:add, item})`
-`end`
-
-`def tag(item) do`
-`GenServer.call(@name, {:tag, item})`
-`end`
-
-`def stop do`
-`GenServer.call(@name, :stop)`
-`end`
-
-`def init(:ok) do`
-`{:ok, []}`
-`end`
-
-`def handle_call({:add, item}, _from, state) do`
-`new_state = [item|state]`
-`{:reply, {:ok, new_state}, new_state}`
-`end`
-
-`def handle_call({:tag, item}, _from, state) when Integer.is_even(item) do`
-`add({:even, item})`
-`end`
-
-`def handle_call({:tag, item}, _from, state) when Integer.is_odd(item) do`
-`add({:odd, item})`
-`end`
-
-`def handle_call(:stop, _from, state) do`
-`{:stop, :normal, state}`
-`end`
-`end`
-Numbers are added into the Stack GenServer. If the number is an even number, then a tagged tuple
-`{:even, number}`
-is added into the stack. If it’s an odd number, then
-`{:odd, number}`
-will be pushed into the stack instead. Here’s the *intended* behavior (again, this doesn’t work with the current implementation):
-
-`iex(1)> Stacky.start_link`
-`{:ok, #PID<0.87.0>}`
-
-`iex(2)> Stacky.add(1)`
-`{:ok, [1]}`
-
-`iex(3)> Stacky.add(2)`
-`{:ok, [2, 1]}`
-
-`iex(4)> Stacky.add(3)`
-`{:ok, [3, 2, 1]}`
-
-`iex(5)> Stacky.tag(4)`
-`{:ok, [{:even, 4], 3, 2, 1]}`
-
-`iex(6)> Stacky.tag(5)``{:ok, [{:odd, 5}, {:even, 4], 3, 2, 1]}`
-Unfortunately, when we try out
-`Stack.tag/1`, we get a nasty error message:
-
-`16:44:26.939 [error] GenServer Stacky terminating`
-`** (stop) exited in: GenServer.call(Stacky, {:add, {:even, 4}}, 5000)`
-`** (EXIT) time out`
-`(elixir) lib/gen_server.ex:564: GenServer.call/3`
-`(stdlib) gen_server.erl:629: :gen_server.try_handle_call/4`
-`(stdlib) gen_server.erl:661: :gen_server.handle_msg/5`
-`(stdlib) proc_lib.erl:240: :proc_lib.init_p_do_apply/3`
-`Last message: {:tag, 3}``State: [3, 2, 1]`
-Take a moment and see if you can spot the problem. While you are thinking, let Concuerror help you out a little. Create
-`stacky_test.ex`
-in
-`test/concurrency`. The test is simple:
-
-
-Listing 11. 38 Creating test/0 to test with Concuerror
-
-`Code.require_file "../test_helper.exs", __DIR__`
-
-`defmodule Stacky.ConcurrencyTest do`
-
-`def test do`
-`{:ok, _pid} = Stacky.start_link`
-`Stacky.tag(1)`
-`Stacky.stop`
-`end`
-`end`
-Run
-`mix test`
-then run Concuerror and see what happens:
-
-`% concuerror --pa /usr/local/Cellar/elixir/HEAD/lib/elixir/ebin \`
-`--pa /usr/local/Cellar/elixir/HEAD/lib/ex_unit/ebin \`
-`--pa _build/test/lib/concuerror_playground/ebin     \`
-`-m Elixir.Stacky.ConcurrencyTest \``--graph stacky.dot`
-Here’s the output:
-
-`# output truncated ...`
-`Tip: A process crashed with reason '{timeout, ...}'. This may happen when a call to a gen_server (or similar) does not receive a reply within some standard timeout. Use the '--after_timeout' option to treat after clauses that exceed some threshold as 'impossible'.`
-`Tip: An abnormal exit signal was sent to a process. This is probably the worst thing that can happen race-wise, as any other side-effecting operation races with the arrival of the signal. If the test produces too many interleavings consider refactoring your code.`
-`Info: You can see pairs of racing instructions (in the report and --graph) with '--show_races true'`
-`Error: Stop testing on first error. (Check '-h keep_going').`
-
-`Done! (Exit status: warning)``Summary: 1 errors, 1/2 interleavings explored`
-11.2.5     Reading Concuerror’s Outputs
-
-
-It is essential to read what Concuerror tells you. Part of the reason is because Concuerror might need your help to for its error detection. The thing to look out for are the *tips*. Let’s start with the first one:
-
-`Tip: A process crashed with reason '{timeout, ...}'. This may happen when a call to a gen_server (or similar) does not receive a reply within some standard timeout. Use the '--after_timeout' option to treat after clauses that exceed some threshold as 'impossible'.`
-Concuerror always assumes that the
-`after`
-clause is *possible* to reach. Therefore, it will search through the interleavings that will trigger the clause. However, since adding to the stack is a pretty trivial operation, we can explicitly tell Concuerror to say that the
-`after`
-clause will never be triggered with the
-`--after_timeout N`
-flag, where any value higher than
-`N`
-is taken as
-`:infinity`. Let’s run Concuerror again with the
-`--after_timeout 1000`
-flag:
-
-`% concuerror --pa /usr/local/Cellar/elixir/HEAD/lib/elixir/ebin/ \`
-`--pa /usr/local/Cellar/elixir/HEAD/lib/ex_unit/ebin \`
-`--pa _build/test/lib/concuerror_playground/ebin     \`
-`-m Elixir.Stacky.ConcurrencyTest \`
-`--graph stacky.dot \``--after_timeout 1000`
-Interesting! This time, no more tips are emitted. However, as previously reported, Concuerror has found an error:
-
-`% concuerror --pa /usr/local/Cellar/elixir/HEAD/lib/elixir/ebin/ \`
-`--pa /usr/local/Cellar/elixir/HEAD/lib/ex_unit/ebin \`
-`--pa _build/test/lib/concuerror_playground/ebin     \`
-`-m Elixir.Stacky.ConcurrencyTest \`
-`--graph stacky.dot \`
-`--after_timeout 1000`
-
-`# ... output truncated`
-`Error: Stop testing on first error. (Check '-h keep_going').`
-
-`Done! (Exit status: warning)`
-`Summary: 1 errors, 1/1 interleavings explored`
-`# ... output truncated`
-`Error: Stop testing on first error. (Check '-h keep_going').`
-
-`Done! (Exit status: warning)``Summary: 1 errors, 1/1 interleavings explored`
-The report reveals some details about the error it found:
-
-`Erroneous interleaving 1:`
-`* Blocked at a 'receive' (when all other processes have exited):`
-`P in gen.erl line 168``P.1 in gen.erl line 168`
-`Blocked at a 'receive'`
-is basically Concuerror telling you that a deadlock had occurred. Next, it shows the details of how it discovered the error:
-
-`Interleaving info:`
-`1: P: undefined = erlang:whereis('Elixir.Stacky')`
-`in gen.erl line 298`
-`2: P: [] = erlang:process_info(P, registered_name)`
-`in proc_lib.erl line 678`
-`3: P: P.1 = erlang:spawn_opt({proc_lib,init_p,[P,[],gen,init_it,[gen_server,P,P,{local,'Elixir.Stacky'},'Elixir.Stacky',ok,[]]],[link]})`
-`in erlang.erl line 2673`
-`4: P.1: undefined = erlang:put('$ancestors', [P])`
-`in proc_lib.erl line 234`
-`5: P.1: undefined = erlang:put('$initial_call', {'Elixir.Stacky',init,1})`
-`in proc_lib.erl line 235`
-`6: P.1: true = erlang:register('Elixir.Stacky', P.1)`
-`in gen.erl line 301`
-`7: P.1: {ack,P.1,{ok,P.1}} = P ! {ack,P.1,{ok,P.1}}`
-`in proc_lib.erl line 378`
-`8: Message ({ack,P.1,{ok,P.1}}) from P.1 reaches P`
-`9: P: receives message ({ack,P.1,{ok,P.1}})`
-`in proc_lib.erl line 334`
-`10: P: P.1 = erlang:whereis('Elixir.Stacky')`
-`in gen.erl line 256`
-`11: P: #Ref<0.0.1.188> = erlang:monitor(process, P.1)`
-`in gen.erl line 155`
-`12: P: {'$gen_call',{P,#Ref<0.0.1.188>},{tag,1}} = erlang:send(P.1, {'$gen_call',{P,#Ref<0.0.1.188>},{tag,1}}, [noconnect])`
-`in gen.erl line 166`
-`13: Message ({'$gen_call',{P,#Ref<0.0.1.188>},{tag,1}}) from P reaches P.1`
-`14: P.1: receives message ({'$gen_call',{P,#Ref<0.0.1.188>},{tag,1}})`
-`in gen_server.erl line 382`
-`15: P.1: P.1 = erlang:whereis('Elixir.Stacky')`
-`in gen.erl line 256`
-`16: P.1: #Ref<0.0.1.209> = erlang:monitor(process, P.1)`
-`in gen.erl line 155`
-`17: P.1: {'$gen_call',{P.1,#Ref<0.0.1.209>},{add,{odd,1}}} = erlang:send(P.1, {'$gen_call',{P.1,#Ref<0.0.1.209>},{add,{odd,1}}}, [noconnect])``in gen.erl line 166`
-The very last line tells us the line that is causing the deadlock:
-
-`17: P.1: {'$gen_call',{P.1,#Ref<0.0.1.209>},{add,{odd,1}}} = erlang:send(P.1, {'$gen_call',{P.1,#Ref<0.0.1.209>},{add,{odd,1}}}, [noconnect])`
-`in gen.erl line 166`
-The problem here is that when two or more synchronous calls are mutually waiting for each other, you get a deadlock. In this example, the callback of the synchronous
-`tag/1`
-function calls
-`add/1`, which itself is synchronous.
-`tag/1`
-will return when
-`add/1`
-returns, but
-`add/1`
-is waiting for
-`tag/1`
-to return too. Therefore, both processes are deadlocked.
-
-
-Since we know where the problem is, let’s fix it. The only changes needed are in
-`tag/1`
-callback functions:
-
-
-Listing 11. 39 Fixing Stacky by avoiding additional synchronous calls in synchronous calls
-
-`defmodule Stacky do`
-
-`# ...`
-
-`def handle_call({:tag, item}, _from, state) when Integer.is_even(item) do`
-`new_state = [{:even, item} |state]`
-`{:reply, {:ok, new_state}, new_state}`
-`end`
-
-`def handle_call({:tag, item}, _from, state) when Integer.is_odd(item) do`
-`new_state = [{:odd, item} |state]`
-`{:reply, {:ok, new_state}, new_state}`
-`end`
-
-`# ...``end`
-Remember to compile and then run Concuerror again:
-
-`# ... output omitted`
-`Tip: An abnormal exit signal was sent to a process. This is probably the worst thing that can happen race-wise, as any other side-effecting operation races with the arrival of the signal. If the test produces too many interleavings consider refactoring your code.`
-`Error: Stop testing on first error. (Check '-h keep_going').`
-
-`Done! (Exit status: warning)``Summary: 1 errors, 1/1 interleavings explored`
-Whoops! Concuerror reported another error. What went wrong? Let’s crack open the report again:
-
-`Erroneous interleaving 1:`
-`* At step 30 process P exited abnormally`
-`Reason:`
-`{normal,{'Elixir.GenServer',call,['Elixir.Stacky',stop,5000]}}`
-`Stacktrace:`
-`[{'Elixir.GenServer',call,3,[{file,"lib/gen_server.ex"},{line,564}]},`
-`{'Elixir.Stacky.ConcurrencyTest',test,0,``[{file,"test/concurrency/stacky_test.ex"},{line,8}]}]`
-The tip indicated an abnormal exit. However from the looks of it, our GenServer exited *normally* and
-`Stacky.stop/0`
-caused this. Since this is something that Concuerror should not worry about, we can safely tell it that processes the exit with
-`:normal`
-as a reason is fine using the
-`--treat_as_normal normal`
-option:
-
-`% concuerror --pa /usr/local/Cellar/elixir/HEAD/lib/elixir/ebin/ \`
-`--pa /usr/local/Cellar/elixir/HEAD/lib/ex_unit/ebin \`
-`--pa _build/test/lib/concuerror_playground/ebin     \`
-`-m Elixir.Stacky.ConcurrencyTest \`
-`--graph stacky.dot \`
-`--show_races true  \`
-`--after_timeout 1000 \`
-`--treat_as_normal normal`
-
-`# ... some output omitted`
-`Warning: Some abnormal exit reasons were treated as normal (--treat_as_normal).`
-`Tip: An abnormal exit signal was sent to a process. This is probably the worst thing that can happen race-wise, as any other side-effecting operation races with the arrival of the signal. If the test produces too many interleavings consider refactoring your code.`
-`Done! (Exit status: completed)``Summary: 0 errors, 1/1 interleavings explored`
-Hurray! Everything is good now!
-
-
-Example: Race Condition with Process Registration
-
-
-Create
-`lib/spawn_reg.ex`. This example will demonstrate a race condition caused by process registration. If you recall, process registration is basically assigning a process a name. Look at the implementation below and see if you can spot the race condition.
-
-
-Listing 11. 40 Full implementation of SpawnReg.
-
-`defmodule SpawnReg do`
-
-`@name __MODULE__`
-
-`def start do`
-`case Process.whereis(@name) do`
-`nil ->`
-`pid = spawn(fn -> loop end)`
-`Process.register(pid, @name)`
-`:ok`
-`_ ->`
-`:already_started`
-`end`
-`end`
-
-`def loop do`
-`receive do`
-`:stop ->`
-`:ok`
-`_ ->`
-`loop`
-`end`
-`end`
-`end`
-This program looks innocent enough. The
-`start/0`
-function creates a named process, but not before checking if has already been registered with the name. When spawned, the process terminates on receiving a
-`:stop`
-message, and continues blissfully otherwise. Can you figure out what’s wrong with this program?
-
-
-Create the test file in
-`test/concurrency_test/spawn_reg_test.ex`. We spawn the
-`SpawnReg`
-process within another process, after which we tell the
-`SpawnReg`
-process to stop:
-
-`Code.require_file "../test_helper.exs", __DIR__`
-
-`defmodule SpawnReg.ConcurrencyTest do`
-
-`def test do`
-`spawn(fn -> SpawnReg.start end)`
-`send(SpawnReg, :stop)`
-`end`
-`end`
-Concuerror discovers a problem (Remember to do a
-`mix test`
-first):
-
-`% concuerror --pa /usr/local/Cellar/elixir/HEAD/lib/elixir/ebin/ \`
-`--pa /usr/local/Cellar/elixir/HEAD/lib/ex_unit/ebin \`
-`--pa _build/test/lib/concuerror_playground/ebin     \`
-`-m Elixir.SpawnReg.ConcurrencyTest \`
-`--graph spawn_reg.dot`
- 
-`# ... output omitted`
-`Info: You can see pairs of racing instructions (in the report and --graph) with '--show_races true'`
-`Error: Stop testing on first error. (Check '-h keep_going').`
-
-`Done! (Exit status: warning)``Summary: 1 errors, 1/2 interleavings explored`
-It also tells us about using the
-`--show_races true`
-to reveal pairs of racing instructions. Let’s do that:
-
-`% concuerror --pa /usr/local/Cellar/elixir/HEAD/lib/elixir/ebin/ \`
-`--pa /usr/local/Cellar/elixir/HEAD/lib/ex_unit/ebin \`
-`--pa _build/test/lib/concuerror_playground/ebin     \`
-`-m Elixir.SpawnReg.ConcurrencyTest \`
-`--graph spawn_reg.dot \``--show_races true`
-Let’s examine the report for the erroneous interleaving:
-
-`Erroneous interleaving 1:`
-`* At step 3 process P exited abnormally`
-`Reason:`
-`{badarg,[{erlang,send,`
-`['Elixir.SpawnReg',stop],`
-`[9,{file,"test/concurrency/spawn_reg_test.ex"}]}]}`
-`Stacktrace:`
-`[{erlang,send,`
-`['Elixir.SpawnReg',stop],`
-`[9,{file,"test/concurrency/spawn_reg_test.ex"}]}]`
-`* Blocked at a 'receive' (when all other processes have exited):``P.1.1 in spawn_reg.ex line 17`
-It tells us that at the third step, the
-`SpawnReg.stop/0`
-call fails with a
-`:badarg`. The
-`P.1.1`
-process is also deadlocked. In other words, it never received a message that it was waiting for. Which is the
-`P.1.1`
-process? This is the first process spawned by the first process that was spawned by the parent process. In less words:
-
-`spawn(fn -> SpawnReg.start end)`
-Another reason why Concuerror might say that is because we have failed to “tear down” our processes. In general for Concuerror tests, it is good practice to make our processes exit once we are done with them, such as sending
-`:stop`
-messages. If we inspect the interleaving info, we get a get a better sense of the problem:
-
-`Interleaving info:`
-`1: P: P.1 = erlang:spawn(erlang, apply, [#Fun<'Elixir.SpawnReg.ConcurrencyTest'.'-test/0-fun-0-'.0>,[]])`
-`in erlang.erl line 2495`
-`2: P: Exception badarg raised by: erlang:send('Elixir.SpawnReg', stop)`
-`in spawn_reg_test.ex line 9`
-`3: P: exits abnormally ({badarg,[{erlang,send,['Elixir.SpawnReg',stop],[9,{file,[116,101,115,116,47,99,111,110|...]}]}]})`
-`4: P.1: undefined = erlang:whereis('Elixir.SpawnReg')`
-`in process.ex line 359`
-`5: P.1: P.1.1 = erlang:spawn(erlang, apply, [#Fun<'Elixir.SpawnReg'.'-start/0-fun-0-'.0>,[]])`
-`in erlang.erl line 2495`
-`6: P.1: true = erlang:register('Elixir.SpawnReg', P.1.1)`
-`in process.ex line 338`
-`7: P.1: exits normally`
-`--------------------------------------------------------------------------------`
-
-`Pairs of racing instructions:`
-`*    2: P: Exception badarg raised by: erlang:send('Elixir.SpawnReg', stop)``6: P.1: true = erlang:register('Elixir.SpawnReg', P.1.1)`
-Concuerror has helpfully discovered a race condition! In fact, it has even pointed out the pair of racing instructions that was the cause! You might find the image more helpful. You will also notice that the image contains an error pointing to the pair racing instructions. Super handy!
-
-
-Here’s the graphic version:
-
-
-![](../images//11_4.png)  
-
-
-
-Figure 11.4 Concuerror showing a race condition
-
-
-The race condition here happens because the process might not complete setting name up yet. Therefore,
-`send/2`
-might fail if
-`:name`
-is not registered yet. Concuerror has identified that this is a *possible* interleaving. If you tried this out in the console, you very well might have not even encountered the error.
-
-
-11.3       Summary of Concuerror
-
-
-We have just seen some of the concurrency bugs that Concuerror can pick out. Many of these bugs are not obvious and sometimes very surprising. It is nearly impossible to use conventional unit-testing techniques and expose the concurrency bugs that Concuerror is able to pick up relatively easily. Furthermore, unit-testing tools are not able to produce a process trace of the inter-leavings that led up to the bug, whether is a process deadlock, crash or a race-condition. Concuerror is a tool I will keep close by when I develop my Elixir programs.
-
-
-11.4       Resources
-
-
-Both tools were borne out of research; therefore, you will most likely see papers rather than written books about tools such as QuickCheck and Concuerror. You are witnessing a humble attempt to contribute to the latter. Fortunately in recent years, the creators of these two tools have been giving conference talks and workshops that are freely available online. Here’s a list of resources that you will find useful if you want to dive deeper into QuickCheck and Concuerror:
-
-
-·      Software Testing with QuickCheck (paper by John Hughes)
-
-
-·      Testing Erlang Data Types with Quviq QuickCheck (paper by Thomas Arts, Laura M. Castro and John Hughes)
-
-
-·      Jesper Louis Anderson has a series of excellent posts [[5]](#uGplayAVlyLaX4IyOPPBFu5)where he develops a QuickCheck model to test the new implementation of Map in Erlang 18.0.
-
-
-·      Test-Driven Development of Concurrent Programs using Concuerror (paper by Alkis Gotovos, Maria Christakis and Konstantinos Sangonas)
-
-
-11.5       Summary
-
-
-In this chapter, we have seen two power tools. One is capable of generating as many test cases as you want, and the other is capable of seeking hard-to-find concurrency bugs and potentially reveal insights into our code. To recap, we have learnt:
-
-
-·      How to use QuickCheck and Concuerror in Elixir (even though they have been originally written for Erlang programs in mind)
-
-
-·      How to generate test cases with QuickCheck by specifying properties that are more general than specific unit tests
-
-
-·      Learn a few pointers to come up with own our properties
-
-
-·      Design custom generators to produce exactly the kind of data we need
-
-
-·      Use Concuerror to detect various concurrency errors such as communication deadlocks, process deadlocks and race conditions
-
-
-·      Seen a few examples of how these concurrency bugs can occur
-
-
-We haven’t explored every feature there is, and some advanced but very useful features have been left out. Thank goodness, otherwise I would never be done with the book! However, this chapter should give you the fundamentals and tools needed to conduct your own exploration.
-
-
-
-
+Interleaving info:
+1: P: P.1 = erlang:spawn(erlang, apply, [#Fun<'Elixir.PingPong.ConcurrencyTest'.'-test/0-fun-0-'.0>,[]])
+in erlang.erl line 2497
+2: P: P.2 = erlang:spawn(erlang, apply, [#Fun<'Elixir.PingPong.ConcurrencyTest'.'-test/0-fun-1-'.0>,[]])
+in erlang.erl line 2497
+3: P: exits normally
+4: P.2: pong = erlang:send(P.1, pong)
+in ping_pong.ex line 10
+5: Message (pong) from P.2 reaches P.1
+6: P.1: receives message (pong)
+in ping_pong.ex line 4
+7: P.1: exits normally
+
+Done! (Exit status: warning)Summary: 1 errors, 1/1 interleaving explored
+```
+你可能会想知道 `P`、`P.1` 和 `P.2` 是什么。`P` 是父进程。`P.1` 是父进程生成的第一个进程，`P.2` 是父进程生成的第二个进程。现在，让我们告诉Concuerror生成交错的可视化：
+
+```bash
+% dot -Tpng ping_pong.dot > ping_pong.png
+```
+`ping_pong.png` 看起来像这样：
+
+![](../../images/11_3.png)
+
+图 11. 3 Concuerror显示我们一个被阻塞的进程
+
+报告上的编号行对应图像上的数字。同时查看图像和报告有助于拼凑出导致问题的事件。这就像玩侦探游戏，拼凑犯罪现场的线索！这次，犯罪现场是一个GenServer程序。
+
+示例：GenServer在另一个同步调用中对自身进行同步调用
+
+OTP行为可以保护我们免受许多潜在的并发错误，但是很可能会自食其果。下一个例子展示了如何做到这一点。换句话说，不要在家里尝试这个：
+
+```elixir
+defmodule Stacky do
+use GenServer
+require Integer
+
+@name __MODULE__
+
+def start_link do
+GenServer.start_link(__MODULE__, :ok, name: @name)
+end
+
+def add(item) do
+GenServer.call(@name, {:add, item})
+end
+
+def tag(item) do
+GenServer.call(@name, {:tag, item})
+end
+
+def stop do
+GenServer.call(@name, :stop)
+end
+
+def init(:ok) do
+{:ok, []}
+end
+
+def handle_call({:add, item}, _from, state) do
+new_state = [item|state]
+{:reply, {:ok, new_state}, new_state}
+end
+
+def handle_call({:tag, item}, _from, state) when Integer.is_even(item) do
+add({:even, item})
+end
+
+def handle_call({:tag, item}, _from, state) when Integer.is_odd(item) do
+add({:odd, item})
+end
+
+def handle_call(:stop, _from, state) do
+{:stop, :normal, state}
+end
+end
+```
+数字被添加到Stack GenServer中。如果数字是偶数，那么一个标记的元组 `{:even, number}` 将被添加到堆栈中。如果是奇数，那么 `{:odd, number}` 将被推入堆栈。这是*预期的*行为（再次强调，这与当前的实现不符）：
+
+```elixir
+iex(1)> Stacky.start_link
+{:ok, #PID<0.87.0>}
+
+iex(2)> Stacky.add(1)
+{:ok, [1]}
+
+iex(3)> Stacky.add(2)
+{:ok, [2, 1]}
+
+iex(4)> Stacky.add(3)
+{:ok, [3, 2, 1]}
+
+iex(5)> Stacky.tag(4)
+{:ok, [{:even, 4], 3, 2, 1]}
+
+iex(6)> Stacky.tag(5){:ok, [{:odd, 5}, {:even, 4], 3, 2, 1]}
+```
+不幸的是，当我们尝试 `Stack.tag/1` 时，我们得到了一个令人讨厌的错误消息：
+
+```bash
+16:44:26.939 [error] GenServer Stacky terminating
+** (stop) exited in: GenServer.call(Stacky, {:add, {:even, 4}}, 5000)
+** (EXIT) time out
+(elixir) lib/gen_server.ex:564: GenServer.call/3
+(stdlib) gen_server.erl:629: :gen_server.try_handle_call/4
+(stdlib) gen_server.erl:661: :gen_server.handle_msg/5
+(stdlib) proc_lib.erl:240: :proc_lib.init_p_do_apply/3
+Last message: {:tag, 3}State: [3, 2, 1]
+```
+花一点时间看看你能否找出问题。在你思考的时候，让Concuerror帮你一点。在 `test/concurrency` 中创建 `stacky_test.ex`。测试很简单：
+
+```elixir
+Code.require_file "../test_helper.exs", __DIR__
+
+defmodule Stacky.ConcurrencyTest do
+
+def test do
+{:ok, _pid} = Stacky.start_link
+Stacky.tag(1)
+Stacky.stop
+end
+end
+```
+运行 `mix test`，然后运行Concuerror看看会发生什么：
+
+```bash
+% concuerror --pa /usr/local/Cellar/elixir/HEAD/lib/elixir/ebin \
+--pa /usr/local/Cellar/elixir/HEAD/lib/ex_unit/ebin \
+--pa _build/test/lib/concuerror_playground/ebin     \
+-m Elixir.Stacky.ConcurrencyTest \--graph stacky.dot
+```
+这是输出：
+
+```bash
+# output truncated ...
+Tip: A process crashed with reason '{timeout, ...}'. This may happen when a call to a gen_server (or similar) does not receive a reply within some standard timeout. Use the '--after_timeout' option to treat after clauses that exceed some threshold as 'impossible'.
+Tip: An abnormal exit signal was sent to a process. This is probably the worst thing that can happen race-wise, as any other side-effecting operation races with the arrival of the signal. If the test produces too many interleavings consider refactoring your code.
+Info: You can see pairs of racing instructions (in the report and --graph) with '--show_races true'
+Error: Stop testing on first error. (Check '-h keep_going').
+
+Done! (Exit status: warning)Summary: 1 errors, 1/2 interleavings explored
+```
+
+阅读Concuerror的输出是非常重要的。部分原因是因为Concuerror可能需要你的帮助来进行错误检测。需要注意的是*提示*。让我们从第一个开始：
+
+```bash
+Tip: A process crashed with reason '{timeout, ...}'. This may happen when a call to a gen_server (or similar) does not receive a reply within some standard timeout. Use the '--after_timeout' option to treat after clauses that exceed some threshold as 'impossible'.
+```
+Concuerror总是假设 `after` 子句是*可能*达到的。因此，它会搜索那些会触发该子句的交错。然而，由于添加到堆栈是一个相当简单的操作，我们可以明确地告诉Concuerror说 `after` 子句永远不会被触发，使用 `--after_timeout N` 标志，其中任何高于 `N` 的值都被视为 `:infinity`。让我们再次运行Concuerror，使用 `--after_timeout 1000` 标志：
+
+```bash
+% concuerror --pa /usr/local/Cellar/elixir/HEAD/lib/elixir/ebin \
+--pa /usr/local/Cellar/elixir/HEAD/lib/ex_unit/ebin \
+--pa _build/test/lib/concuerror_playground/ebin     \
+-m Elixir.Stacky.ConcurrencyTest \
+--graph stacky.dot \--after_timeout 1000
+```
+有趣的是，这次没有发出更多的提示。然而，如前所述，Concuerror已经发现了一个错误：
+
+```bash
+% concuerror --pa /usr/local/Cellar/elixir/HEAD/lib/elixir/ebin \
+--pa /usr/local/Cellar/elixir/HEAD/lib/ex_unit/ebin \
+--pa _build/test/lib/concuerror_playground/ebin     \
+-m Elixir.Stacky.ConcurrencyTest \
+--graph stacky.dot \--after_timeout 1000
+
+# ... output truncated
+Error: Stop testing on first error. (Check '-h keep_going').
+
+Done! (Exit status: warning)
+Summary: 1 errors, 1/1 interleavings explored
+# ... output truncated
+Error: Stop testing on first error. (Check '-h keep_going').
+
+Done! (Exit status: warning)Summary: 1 errors, 1/1 interleavings explored
+```
+报告揭示了一些关于它找到的错误的细节：
+
+```bash
+Erroneous interleaving 1:
+* Blocked at a 'receive' (when all other processes have exited):
+P in gen.erl line 168P.1 in gen.erl line 168
+```
+`Blocked at a 'receive'` 基本上是Concuerror告诉你发生了死锁。
+
+接下来，它显示了如何发现错误的详细信息：
+
+```bash
+Interleaving info:
+1: P: undefined = erlang:whereis('Elixir.Stacky')
+in gen.erl line 298
+2: P: [] = erlang:process_info(P, registered_name)
+in proc_lib.erl line 678
+3: P: P.1 = erlang:spawn_opt({proc_lib,init_p,[P,[],gen,init_it,[gen_server,P,P,{local,'Elixir.Stacky'},'Elixir.Stacky',ok,[]]],[link]})
+in erlang.erl line 2673
+4: P.1: undefined = erlang:put('$ancestors', [P])
+in proc_lib.erl line 234
+5: P.1: undefined = erlang:put('$initial_call', {'Elixir.Stacky',init,1})
+in proc_lib.erl line 235
+6: P.1: true = erlang:register('Elixir.Stacky', P.1)
+in gen.erl line 301
+7: P.1: {ack,P.1,{ok,P.1}} = P ! {ack,P.1,{ok,P.1}}
+in proc_lib.erl line 378
+8: Message ({ack,P.1,{ok,P.1}}) from P.1 reaches P
+9: P: receives message ({ack,P.1,{ok,P.1}})
+in proc_lib.erl line 334
+10: P: P.1 = erlang:whereis('Elixir.Stacky')
+in gen.erl line 256
+11: P: #Ref<0.0.1.188> = erlang:monitor(process, P.1)
+in gen.erl line 155
+12: P: {'$gen_call',{P,#Ref<0.0.1.188>},{tag,1}} = erlang:send(P.1, {'$gen_call',{P,#Ref<0.0.1.188>},{tag,1}}, [noconnect])
+in gen.erl line 166
+13: Message ({'$gen_call',{P,#Ref<0.0.1.188>},{tag,1}}) from P reaches P.1
+14: P.1: receives message ({'$gen_call',{P,#Ref<0.0.1.188>},{tag,1}})
+in gen_server.erl line 382
+15: P.1: P.1 = erlang:whereis('Elixir.Stacky')
+in gen.erl line 256
+16: P.1: #Ref<0.0.1.209> = erlang:monitor(process, P.1)
+in gen.erl line 155
+17: P.1: {'$gen_call',{P.1,#Ref<0.0.1.209>},{add,{odd,1}}} = erlang:send(P.1, {'$gen_call',{P.1,#Ref<0.0.1.209>},{add,{odd,1}}}, [noconnect])in gen.erl line 166
+```
+最后一行告诉我们导致死锁的行：
+
+```bash
+17: P.1: {'$gen_call',{P.1,#Ref<0.0.1.209>},{add,{odd,1}}} = erlang:send(P.1, {'$gen_call',{P.1,#Ref<0.0.1.209>},{add,{odd,1}}}, [noconnect])
+in gen.erl line 166
+```
+这里的问题是，当两个或更多的同步调用相互等待时，你会得到一个死锁。在这个例子中，同步函数 `tag/1` 的回调调用了 `add/1`，而 `add/1` 本身也是同步的。`tag/1` 会在 `add/1` 返回时返回，但 `add/1` 也在等待 `tag/1` 返回。因此，两个进程都处于死锁状态。
+
+既然我们知道问题出在哪里，那就让我们修复它。需要改变的只是 `tag/1` 回调函数：
+
+```elixir
+defmodule Stacky do
+
+# ...
+
+def handle_call({:tag, item}, _from, state) when Integer.is_even(item) do
+new_state = [{:even, item} |state]
+{:reply, {:ok, new_state}, new_state}
+end
+
+def handle_call({:tag, item}, _from, state) when Integer.is_odd(item) do
+new_state = [{:odd, item} |state]
+{:reply, {:ok, new_state}, new_state}
+end
+
+# ...end
+```
+记得编译然后再次运行Concuerror：
+
+```bash
+# ... output omitted
+Tip: An abnormal exit signal was sent to a process. This is probably the worst thing that can happen race-wise, as any other side-effecting operation races with the arrival of the signal. If the test produces too many interleavings consider refactoring your code.
+Error: Stop testing on first error. (Check '-h keep_going').
+
+Done! (Exit status: warning)Summary: 1 errors, 1/1 interleavings explored
+```
+哎呀！Concuerror报告了另一个错误。出了什么问题？让我们再次打开报告看看：
+
+```bash
+Erroneous interleaving 1:
+* At step 30 process P exited abnormally
+Reason:
+{normal,{'Elixir.GenServer',call,['Elixir.Stacky',stop,5000]}}
+Stacktrace:
+[{'Elixir.GenServer',call,3,[{file,"lib/gen_server.ex"},{line,564}]},
+{'Elixir.Stacky.ConcurrencyTest',test,0,[{file,"test/concurrency/stacky_test.ex"},{line,8}]}]
+```
+提示指出了一个异常退出。然而从外表看，我们的GenServer*正常*退出，而 `Stacky.stop/0` 导致了这个。既然这是Concuerror不应该担心的事情，我们可以安全地告诉它，进程以 `:normal` 作为原因退出是可以的，使用 `--treat_as_normal normal` 选项：
+
+```bash
+% concuerror --pa /usr/local/Cellar/elixir/HEAD/lib/elixir/ebin \
+--pa /usr/local/Cellar/elixir/HEAD/lib/ex_unit/ebin \
+--pa _build/test/lib/concuerror_playground/ebin     \
+-m Elixir.Stacky.ConcurrencyTest \
+--graph stacky.dot \
+--show_races true  
+--after_timeout 1000 \
+--treat_as_normal normal
+
+# ... some output omitted
+Warning: Some abnormal exit reasons were treated as normal (--treat_as_normal).
+Tip: An abnormal exit signal was sent to a process. This is probably the worst thing that can happen race-wise, as any other side-effecting operation races with the arrival of the signal. If the test produces too many interleavings consider refactoring your code.
+Done! (Exit status: completed)Summary: 0 errors, 1/1 interleavings explored
+```
+万岁！现在一切都好了！
+
+示例：进程注册的竞态条件
+
+创建 `lib/spawn_reg.ex`。这个例子将演示由进程注册引起的竞态条件。如果你记得，进程注册基本上就是给一个进程分配一个名字。看看下面的实现，看你能否发现竞态条件。
+
+```elixir
+defmodule SpawnReg do
+
+@name __MODULE__
+
+def start do
+case Process.whereis(@name) do
+nil ->
+pid = spawn(fn -> loop end)
+Process.register(pid, @name)
+:ok
+_ ->
+:already_started
+end
+end
+
+def loop do
+receive do
+:stop ->
+:ok
+_ ->
+loop
+end
+end
+end
+```
+这个程序看起来足够无辜。`start/0` 函数创建了一个命名的进程，但在此之前，它会检查是否已经用该名字注册过。当生成时，进程在接收到 `:stop` 消息时终止，并在其他情况下继续愉快地运行。你能找出这个程序的问题吗？
+
+在 `test/concurrency_test/spawn_reg_test.ex` 中创建测试文件。我们在另一个进程中生成 `SpawnReg` 进程，然后我们告诉 `SpawnReg` 进程停止：
+
+```elixir
+Code.require_file "../test_helper.exs", __DIR__
+
+defmodule SpawnReg.ConcurrencyTest do
+
+def test do
+spawn(fn -> SpawnReg.start end)
+send(SpawnReg, :stop)
+end
+end
+```
+Concuerror发现了一个问题（记得先做一个 `mix test`）：
+
+```bash
+% concuerror --pa /usr/local/Cellar/elixir/HEAD/lib/elixir/ebin \
+--pa /usr/local/Cellar/elixir/HEAD/lib/ex_unit/ebin \
+--pa _build/test/lib/concuerror_playground/ebin     \
+-m Elixir.SpawnReg.ConcurrencyTest \
+--graph spawn_reg.dot
+
+# ... output omitted
+Info: You can see pairs of racing instructions (in the report and --graph) with '--show_races true'
+Error: Stop testing on first error. (Check '-h keep_going').
+
+Done! (Exit status: warning)Summary: 1 errors, 1/2 interleavings explored
+```
+它还告诉我们使用 `--show_races true` 来揭示竞争指令的对。让我们这样做：
+
+```bash
+% concuerror --pa /usr/local/Cellar/elixir/HEAD/lib/elixir/ebin \
+--pa /usr/local/Cellar/elixir/HEAD/lib/ex_unit/ebin \
+--pa _build/test/lib/concuerror_playground/ebin     \
+-m Elixir.SpawnReg.ConcurrencyTest \
+--graph spawn_reg.dot \--show_races true
+```
+让我们检查一下错误交错的报告：
+
+```bash
+Erroneous interleaving 1:
+* At step 3 process P exited abnormally
+Reason:
+{badarg,[{erlang,send,
+['Elixir.SpawnReg',stop],
+[9,{file,"test/concurrency/spawn_reg_test.ex"}]}]}
+Stacktrace:
+[{erlang,send,
+['Elixir.SpawnReg',stop],
+[9,{file,"test/concurrency/spawn_reg_test.ex"}]}]
+* Blocked at a 'receive' (when all other processes have exited):P.1.1 in spawn_reg.ex line 17
+```
+它告诉我们，在第三步，`SpawnReg.stop/0` 调用失败，原因是 `:badarg`。`P.1.1` 进程也被死锁了。换句话说，它从未收到它正在等待的消息。
+`P.1.1` 是什么进程？这是由父进程生成的第一个进程生成的第一个进程。用更少的话来说：
+
+```elixir
+spawn(fn -> SpawnReg.start end)
+```
+Concuerror可能会这样说的另一个原因是我们没有“拆除”我们的进程。一般来说，对于Concuerror测试，一旦我们完成了进程，让它们退出是一种好的做法，比如发送 `:stop` 消息。如果我们检查交错信息，我们可以更好地理解问题：
+
+```bash
+Interleaving info:
+1: P: P.1 = erlang:spawn(erlang, apply, [#Fun<'Elixir.SpawnReg.ConcurrencyTest'.'-test/0-fun-0-'.0>,[]])
+in erlang.erl line 2495
+2: P: Exception badarg raised by: erlang:send('Elixir.SpawnReg', stop)
+in spawn_reg_test.ex line 9
+3: P: exits abnormally ({badarg,[{erlang,send,['Elixir.SpawnReg',stop],[9,{file,[116,101,115,116,47,99,111,110|...]}]}]})
+4: P.1: undefined = erlang:whereis('Elixir.SpawnReg')
+in process.ex line 359
+5: P.1: P.1.1 = erlang:spawn(erlang, apply, [#Fun<'Elixir.SpawnReg'.'-start/0-fun-0-'.0>,[]])
+in erlang.erl line 2495
+6: P.1: true = erlang:register('Elixir.SpawnReg', P.1.1)
+in process.ex line 338
+7: P.1: exits normally
+--------------------------------------------------------------------------------
+
+Pairs of racing instructions:
+*    2: P: Exception badarg raised by: erlang:send('Elixir.SpawnReg', stop)6: P.1: true = erlang:register('Elixir.SpawnReg', P.1.1)
+```
+Concuerror已经帮助我们发现了一个竞态条件！事实上，它甚至指出了导致这个问题的竞争指令对！你可能会发现图像更有帮助。你还会注意到，图像中包含了一个指向竞争指令对的错误。非常方便！
+
+这是图形版本：
+
+![](../../images/11_4.png)
+
+图 11.4 Concuerror显示一个竞态条件
+
+这里的竞态条件发生是因为进程可能还没有完成设置名字。因此，如果 `:name` 还没有注册，`send/2` 可能会失败。Concuerror已经确定这是一个*可能*的交错。如果你在控制台中尝试这个，你很可能甚至没有遇到错误。
+
+11.3       Concuerror的总结
+
+我们刚刚看到了Concuerror可以挑选出的一些并发错误。许多这样的错误并不明显，有时甚至令人惊讶。使用传统的单元测试技术，几乎不可能暴露出Concuerror相对容易捕获的并发错误。此外，单元测试工具无法产生导致错误的进程追踪，无论是进程死锁、崩溃还是竞态条件。Concuerror是我在开发Elixir程序时会密切关注的一个工具。
+
+11.4       资源
+
+这两个工具都是由研究产生的，因此，你最有可能看到的是关于QuickCheck和Concuerror这样的工具的论文，而不是书籍。你正在见证对后者的一次谦逊的尝试。幸运的是，近年来，这两个工具的创建者们已经在会议上进行了演讲和研讨会，这些都可以在网上免费获取。如果你想深入了解QuickCheck和Concuerror，以下是一些你会发现有用的资源：
+
+- Software Testing with QuickCheck (John Hughes的论文)
+- Testing Erlang Data Types with Quviq QuickCheck (Thomas Arts, Laura M. Castro和John Hughes的论文)
+- Jesper Louis Anderson有一系列优秀的文章[[5]](#uGplayAVlyLaX4IyOPPBFu5)，他在这些文章中开发了一个QuickCheck模型，用来测试Erlang 18.0中Map的新实现。
+- 使用Concuerror进行并发程序的测试驱动开发 (Alkis Gotovos, Maria Christakis和Konstantinos Sangonas的论文)
+
+在本章中，我们看到了两个强大的工具。一个能够生成你想要的尽可能多的测试用例，另一个能够寻找难以发现的并发错误，并可能揭示我们代码中的洞察。总结一下，我们已经学习了：
+
+- 如何在Elixir中使用QuickCheck和Concuerror（尽管它们最初是为Erlang程序设计的）
+- 如何通过指定比特定单元测试更一般的属性来使用QuickCheck生成测试用例
+- 学习一些指针来提出我们自己的属性
+- 设计自定义生成器来产生我们需要的确切数据
+- 使用Concuerror来检测各种并发错误，如通信死锁、进程死锁和竞态条件
+- 看到了一些并发错误可能发生的例子
+
+我们还没有探索所有的特性，一些高级但非常有用的特性被遗漏了。感谢上帝，否则我永远也写不完这本书！然而，本章应该给你提供了进行自己的探索所需要的基础知识和工具。
 
 [****[1]****](#uEandRAdHEMbKa7scWKaW7C) http://krestenkrab.github.io/triq
 
-
-
-
 [****[2]****](#uY3Qeh8W6N7zl8IWhUktnSA) https://github.com/manopapad/proper
-
-
-
 
 [****[3]****](#ud7Cx2vjA84I2jInhUdGBw8) http://www.quviq.com/downloads/
 
-
-
-
-[****[4]****](#u635lIFw7sxq7be8l3pcDE6) This is an excellent word to impress your friends and annoy your co-workers.
-
-
-
+[****[4]****](#u635lIFw7sxq7be8l3pcDE6) 这是一个可以给你的朋友留下深刻印象并烦扰你的同事的优秀词汇。
 
 [****[5]****](#uwnx7uBuXSXwJ6LEmLvJuxF) https://medium.com/@jlouis666
-
-
-
-
-
