@@ -1,101 +1,59 @@
-xml version='1.0' encoding='utf-8'?
+# 第10章 Dialyzer和类型规范
 
+本章内容包括：
 
+- 什么是Dialyzer以及它是如何工作的
+- 使用Dialyzer发现代码中的不一致
+- 编写类型规范和定义自己的类型
 
-Style A ReadMe
+根据你的倾向，类型的提及可能会让你欣喜若狂或者退避三舍。作为一种动态类型语言，Elixir免除了你在代码库中大量使用类型的需求，这一点类似于Haskell。有人可能会认为这导致了更快的开发周期。然而，Elixir程序员不应该过于自满。静态类型语言可以在*编译*时捕捉到一整类错误，而动态语言只能在*运行时*捕捉到这些错误。
 
+幸运的是，语言中内置的容错功能试图拯救我们自己。没有这些功能的语言（Ruby，我在看你）将会直接崩溃。然而，我们有责任尽可能地使我们的软件可靠。在本章中，我们将学习如何利用类型来实现这一点。
 
+我们将了解Dialyzer，这是一个与Erlang发行版捆绑在一起的工具。这个强大的工具用于消除某些类别的软件错误。最棒的部分是，你不需要对你的代码做任何特别的处理。
 
+你将了解一些关于Dialyzer背后有趣的理论。这将帮助你解读它的（有时是隐晦的）错误信息。你还将理解为什么Dialyzer不是解决所有类型问题的灵丹妙药。
 
+在本章的最后部分，我们将学习如何通过在代码中添加类型，使Dialyzer更好地寻找错误。在本章结束时，你将学会如何将Dialyzer作为开发工作流的一部分。
 
+Dialyzer的命名者因为这个与电信相关的缩写而值得加薪。Dialyzer代表了Erlang的不一致性分析器。Dialyzer是一个帮助你发现代码中不一致之处的工具。具体是什么类型的不一致呢？以下是一个列表：
 
-# 10           Dialyzer and Type Specifications
+- 类型错误
+- 引发异常的代码
+- 无法满足的条件
+- 冗余代码
+- 竞态条件
 
+我们将很快亲自看到Dialyzer是如何发现这些不一致的。在此之前，了解Dialyzer的内部工作原理是有帮助的。
 
-This chapter covers:
+10.1       Dialyzer是如何工作的
 
+静态语言可以在编译时捕捉潜在的错误。动态语言的本质意味着它们只能在运行时检测到这些错误。Dialyzer试图将静态类型检查器的一些优点带给像Elixir/Erlang这样的动态语言。
 
-·      What is Dialyzer and how it works
+Dialyzer的主要目标之一是不干扰现有程序。这意味着不应该期望任何Erlang（和Elixir）程序员重写代码来适应Dialyzer。
 
+这导致了一个非常好的结果：你不需要提供给Dialyzer任何额外的信息，它就能完成它的工作。这并不是说你*不能*这样做。事实上，正如你稍后将看到的，你可以提供额外的类型信息，让Dialyzer在寻找不一致时做得更好。
 
-·      Finding discrepancies in your code with Dialyzer
+10.2       成功类型
 
+Dialyzer使用*成功类型*的概念来收集和推断类型信息。了解Dialyzer
 
-·      Writing type specifications and defining your own types
+如何工作是值得的。要理解成功类型是什么，我们需要了解一点关于Elixir类型系统的知识。
 
+像Elixir这样的动态语言需要一个比静态类型系统更宽松的类型系统，因为函数可能会接受多种类型的参数。
 
-Depending on your inclination, the mere mention of types could either send you shrieking with joy or recoiling in terror. Being a dynamically typed language, Elixir spares you from having to pepper your code base with types à la Haskell. Some might argue that this leads to a quicker development cycle. However, the Elixir programmer shouldn’t get too smug. Statically typed languages can catch a whole class of errors at *compile* time that a dynamic language can only catch at *runtime*.
-
-
-Fortunately for us, the fault-tolerance features baked into the language try to save us from ourselves. Languages without these features (Ruby, I’m looking at you) will just crash. However, it is our responsibility to make our software as reliable as possible. In this chapter, we will learn how to exploit types to do that.
-
-
-We will learn about Dialyzer, a tool that comes bundled with the Erlang distribution. This power tool is used to weed out certain classes of software bugs. The best part? You don’t have to do anything special to your code.
-
-
-You will learn some of the interesting theory behind how Dialyzer works. That will help you decipher its (sometimes cryptic) error messages. You will also understand why Dialyzer is not a silver bullet to solve all the your typing woes.
-
-
-In last part of this chapter, we will learn how we can make Dialyzer to a better job at hunting for bugs by sprinkling our code with types. By the end of this chapter, you will learn how to integrate Dialyzer as part of your development workflow.
-
-
-Whoever came up with the name Dialyzer deserves a raise for the awesome telecom-related acronym. Dialyzer stands for DIscrepancy Analyze for ERlang. Dialyzer is a tool that helps you find discrepancies in your code. Exactly what kind? Here’s a list:
-
-
-·      Type Errors
-
-
-·      Exception-raising code
-
-
-·      Unsatisfiable conditions
-
-
-·      Redundant code
-
-
-·      Race conditions
-
-
-We will see for ourselves how Dialyzer can pick up some these discrepancies soon. Before that, it is helpful to understand how Dialyzer works under the hood.
-
-
-10.1       How does Dialyzer Work
-
-
-Static languages can catch potential errors at compile time. Dynamic language, by their very nature, can only detect these errors at runtime. Dialyzer attempts to bring some of the benefits of static type-checkers to a dynamic language like Elixir/Erlang.
-
-
-One of the main objectives of Dialyzer is not to get in the way of existing programs. This means that no Erlang (and Elixir) programmer should be expected to rewrite code just to accommodate Dialyzer.
-
-
-This leads to a very nice outcome: You do not need to provide Dialyzer any additional information for it to do its work. That is not to say that you *can’t*. In fact, as you will see later on, you can provide additional type information that can let Dialyzer do a better job at hunting down discrepancies.
-
-
-10.2       Success Typings
-
-
-Dialyzer uses the notion of *success typings* to gather and infer type information. It is worth getting an idea of how Dialyzer works. To understand what success typings are, we need to understand a little bit about the Elixir type system.
-
-
-A dynamic language such as Elixir requires a type system that is more relaxed than a static type system, since functions can potentially take in multiple types of arguments.
-
-
-Let’s look at the Boolean “and” function for example. In a static language such as Haskell, the
-`and`
-function could be implemented like so:
+例如，让我们看看布尔“和”函数。在像Haskell这样的静态语言中，`and`函数可以这样实现：
 
 `and :: Bool -> Bool -> Bool`
-`and x y | x == True && y == True = True``| otherwise = False`
-The first line
+`and x y | x == True && y == True = True | otherwise = False`
+第一行
 `and :: Bool -> Bool -> Bool`
-is the type signature of the function. It says that
+是函数的类型签名。它表明
 `and`
-is a function that accepts two Booleans as an argument and returns a Boolean. If the type checker sees anything else other than Booleans as inputs to
-`and`, your program will not make it pass compilation. How would an Elixir version look like?
+是一个接受两个布尔值作为参数并返回一个布尔值的函数。如果类型检查器看到任何非布尔值作为输入到
+`and`，你的程序将无法通过编译。Elixir版本会是什么样子呢？
 
-
-Listing 10.1 Boolean and implemented in Elixir
+清单 10.1 在Elixir中实现的布尔与运算
 
 `defmodule MyBoolean do`
 
@@ -111,939 +69,680 @@ Listing 10.1 Boolean and implemented in Elixir
 `false`
 `end`
 `end`
-Thanks to pattern matching, we can express
+多亏了模式匹配，我们可以将
 `and/2`
-as three function clauses. What are valid arguments to
-`and/2`? Both the first and second argument accepts
+表示为三个函数子句。什么是对
+`and/2`的有效参数？第一和第二个参数接受
 `true`,
-`false`, and
-`_`
-while the return values are all Booleans.
+`false`和
+`_`，
+而返回值都是布尔值。
 
-
-The “\_” as you already know means “anything under the sun”. Therefore, these are perfectly ok invocations of
-`and/2`:
+正如你已经知道的，“\_”意味着“任何东西”。因此，以下是对
+`and/2`的完全合理的调用：
 
 `MyBoolean.and(false, "great success!")`
 `MyBoolean.and([1, 2, 3], false)`
-A Haskell type checker will not allow a program like the Elixir one presented earlier, because it doesn’t allow “anything under the sun” as a type. It cannot handle such an uncertainty.
+Haskell类型检查器不会允许像前面展示的Elixir程序，因为它不允许将“任何东西”作为一种类型。它无法处理这种不确定性。
 
+另一方面，Dialyzer采用了一种不同的类型推断算法，称为成功类型。成功类型非常乐观。它总是假设你的所有函数都被正确使用。因此，你的代码在被证明有罪之前是无辜的。
 
-Dialyzer on the other hand, employs a different typing inference algorithm called success typings. Success typings are very optimistic. It always assumes that all your functions are used correctly. Therefore your code is innocent until proven guilty.
+成功类型从*过度估计*你的函数的有效输入和输出开始。所以它从假设你的函数可以接受任何东西并返回任何东西开始。然而，随着它更好地理解你的代码，它会生成*约束*。这些约束反过来将限制输入值，因此，输出。
 
-
-Success typings start with *over-approximating* the valid inputs and outputs to your functions. So it starts with assuming that your function can take it anything and it returns anything. However, as it understands your code better, it generates *constraints*. These constraints will in turn restrict the value inputs and as a consequence, the output.
-
-
-For example, if it sees
-`x + y`, then
+例如，如果它看到
+`x + y`，那么
 `x`
-and
+和
 `y`
-must definitely be numbers. Guards such as
+肯定是数字。像
 `is_atom(z)`
-also provide additional constraints. Once the constraints are generated, it is time to *solve* them, just like a puzzle. The solution to the puzzle is the success typing of the function. Conversely, if no solution is found, the constraints are *unsatisfiable* and you have a type violation on your hands.
+这样的守卫也提供了额外的约束。一旦生成了约束，就是解决它们的时候了，就像解谜一样。谜题的解答就是函数的成功类型。相反，如果没有找到解决方案，约束是*不可满足的*，你手头就有一个类型违规。
 
+然而，重要的是要意识到，因为Dialyzer总是假设你的代码是正确的，所以它*不*保证你的代码是类型安全的。现在，在你起身离开房间之前，由此产生了一个非常好的属性。如果Dialyzer发现了什么问题，那么它*肯定*是对的。所以Dialyzer的第一课是这样的：
 
-However, it is important to realize that because Dialyzer starts with always assuming your code is right, it *doesn’t* guarantee that your code is type-safe. Now, before you get up and leave the room, there is a very nice property that arises from this. If Dialyzer finds something wrong, it is *guaranteed* to be right. So the first lesson of Dialyzer is this:
+Dialyzer永远不会出错！
 
+`Dialyzer 在它说你的代码有问题时，总是\*始终\*正确的。`
 
+这就是为什么当Dialyzer表示你的代码有问题时，它是100%正确的。更严格的类型检查器从假设你的代码是错误的开始，你的代码必须成功通过类型检查才能允许编译。这也意味着你的代码（或多或少）被保证是类型安全的。
 
-Dialyzer is never wrong!
+所以再次强调：Dialyzer *不会*（或永远不会）发现所有类型违规。然而，如果它发现了问题，那么你的代码*肯定*存在问题。现在我们对成功类型（success typings）的工作方式有了一些背景知识，让我们转向了解Elixir中的类型。
 
+10.3 揭示Elixir中的类型，第一部分
 
-`Dialyzer is \_always\_ right if it says your code is wrong.`
+我们一直在使用Elixir，但并没有太多强调确切的类型。在本节和下一节中，我们将稍微更加关注这一点。
 
- 
+从Elixir 1.2开始，有一个非常方便的工具在`iex`中可以打印给定数据类型的信息，称为`i/1`。例如，`"ohai"`和`'ohai'`之间有什么区别（注意分别使用双引号和单引号）？让我们来找出答案：
 
+清单 10.2 使用i/1揭示Elixir字符串的类型
 
+```elixir
+iex> i("ohai")
+Term
+"ohai"
+数据类型
+BitString
+字节大小
+4
+描述
+这是一个字符串：一个UTF-8编码的二进制文件。它被双引号包围打印，因为其中的所有UTF-8码点都是可打印的。
+原始表示
+<<111, 104, 97, 105>>
+参考模块String, :binary
+```
+现在让我们对比一下`'ohai'`：
+
+清单 10.3 使用i/1揭示字符列表的类型
+
+```elixir
+iex> i('ohai')
+Term
+'ohai'
+数据类型
+List
+描述
+这是一个打印为一系列码点的整数列表，用单引号分隔，因为其中的所有整数都代表有效的ascii字符。按照惯例，这样的整数列表被称为“字符列表”。
+原始表示
+[111, 104, 97, 105]
+参考模块List
+```
+下次如果你遇到类型错误并感到困惑，立即使用`i/1`工具。
 
-This is why when Dialyzer says that your code is messed up, it is 100% correct. Stricter type-checkers begin with assuming that your code is wrong, and that your code must type-check successfully before it is allowed to compile. This also means that your code is guaranteed (more or less) to be type-safe.
+10.4 开始使用Dialyzer
 
+Dialyzer可以使用Erlang源代码或调试编译的BEAM字节码。显然，这让我们只能选择后者。这意味着在我们运行Dialyzer之前，必须记得先执行`mix compile`。
 
-So to reiterate: Dialyzer will *not* (or ever) discover all type-violations. However, if it finds a problem, then your code is *guaranteed* to be problematic. Now that we have some background on how success typings work, let’s turn our attention to finding out about types in Elixir.
+记得先编译！
+
+自从开始使用Dialyzer以来，我已经忘记了多少次这个步骤。幸运的是，一旦我发现了Dialyxir（稍后你会看到），我就不再需要手动编译我的代码了。
 
+Dialyzer随Erlang发行版安装，并且存在作为命令行程序：
 
-10.3       Revealing Types in Elixir, Part I
+```shell
+% dialyzer
+```
+检查PLT /Users/benjamintan/.dialyzer_plt是否最新...
+dialyzer: 未找到PLT: /Users/benjamintan/.dialyzer_plt
+使用选项：
+--build_plt   构建新的PLT；或
+--add_to_plt  添加到现有的PLT
 
+例如，使用以下命令：
+dialyzer --build_plt --apps erts kernel stdlib mnesia
+注意，构建如上所述的PLT可能需要20分钟左右
 
-We’ve been using Elixir without much emphasis on the exact types. In this section and the next, we will pay slightly more attention.
+如果您后来需要其他应用程序的信息，比如crypto，
+您可以通过以下命令扩展PLT：
+dialyzer --add_to_plt --apps crypto
+对于不在Erlang/OTP中的应用程序，请使用绝对文件名。
 
+太好了，我们已经确信Dialyzer确实已安装。但是这个*PLT*是什么，Dialyzer正在尝试搜索什么呢？
 
-From Elixir 1.2 onwards, there is a very handy helper in
-`iex`
-that prints information about the given data type called
-`i/1`. For example, what is the difference between
-`"ohai"`
-and
-`'ohai'`
-(note the use of double and single quotes respectively)? Let’s find out:
+10.4.1 PLT：持久查找表
 
+PLT代表持久查找表（Persistent Lookup Table）。Dialyzer使用PLT来存储其分析结果。您还可以使用之前构建的PLT作为Dialyzer的起点。这变得很重要，因为任何非平凡的Elixir应用程序可能都会涉及OTP。如果我们对这样的应用程序运行Dialyzer，分析无疑会花费很长时间。
 
-Listing 10.2 Using i/1 to reveal the type of an Elixir string
+由于OTP库不会改变，我们总是可以构
 
-`iex> i("ohai")`
-`Term`
-`"ohai"`
-`Data type`
-`BitString`
-`Byte size`
-`4`
-`Description`
-`This is a string: a UTF-8 encoded binary. It's printed surrounded by`
-`"double quotes" because all UTF-8 codepoints in it are printable.`
-`Raw representation`
-`<<111, 104, 97, 105>>`
-`Reference modules``String, :binary`
-And let’s now contrast it with
-`'ohai'`:
+建一个“基础PLT”，只在我们的应用程序上运行Dialyzer，相比之下将会花费更短的时间。这的另一面是，一旦您升级了Erlang和/或Elixir，您必须记得重建PLT。
 
+### 10.4.2 Dialyxir（Dialyxir）
 
-Listing 10.3 Using i/1 to reveal the type of a character list
+传统上，运行 Dialyzer 需要输入相当多的命令。幸好，由于程序员的懒惰，现在有一些库包含了 `mix` 任务，使我们的生活更加轻松。我们将使用的一个库是 *Dialyxir*。Dialyxir 包含了 `mix` 任务，使得在 Elixir 项目中使用 Dialyzer 成为一种乐趣。
 
-`iex> i('ohai')`
-`Term`
-`'ohai'`
-`Data type`
-`List`
-`Description`
-`This is a list of integers that is printed as a sequence of codepoints`
-`delimited by single quotes because all the integers in it represent valid`
-`ascii characters. Conventionally, such lists of integers are referred to as`
-`"char lists".`
-`Raw representation`
-`[111, 104, 97, 105]`
-`Reference modules``List`
-Next time if you are getting type errors and are confused, reach immediately for the
-`i/1`
-helper.
+Dialyxir 可以作为依赖安装（我们稍后会看到），也可以全局安装。我们首先全局安装 Dialyxir，以便构建 PLT 表。这不是绝对必要的，但当你不想将 Dialyxir 安装为项目依赖时，这是很有用的：
 
-
-10.4       Getting Started with Dialyzer
-
-
-Dialyzer can either use Erlang source code or debug-compiled BEAM byte-code. Obviously, this leaves us with the latter option. This means that before we run Dialyzer we must remember to do a
-`mix compile`.
-
-
-
-Remember to compile first!
-
-
-
-Since starting to use Dialyzer I have lost count about the number of times I have forgotten this step. Fortunately, once I have discovered Dialyxir (you will see this later on), I no longer have to manually compile my code.
-
-
-
- 
-
-
-
-Dialyzer comes installed with the Erlang distribution and exists as a command-line program:
-
-`% dialyzer`
-`Checking whether the PLT /Users/benjamintan/.dialyzer_plt is up-to-date...`
-`dialyzer: Could not find the PLT: /Users/benjamintan/.dialyzer_plt`
-`Use the options:`
-`--build_plt   to build a new PLT; or`
-`--add_to_plt  to add to an existing PLT`
-
-`For example, use a command like the following:`
-`dialyzer --build_plt --apps erts kernel stdlib mnesia`
-`Note that building a PLT such as the above may take 20 mins or so`
-
-`If you later need information about other applications, say crypto,`
-`you can extend the PLT by the command:`
-`dialyzer --add_to_plt --apps crypto``For applications that are not in Erlang/OTP use an absolute file name.`
-Awesome, we have convinced ourselves that Dialyzer is indeed installed. But what is this *PLT* that Dialyzer is trying to search for?
-
-
-10.4.1     The PLT: The Persistent Lookup Table
-
-
-The PLT stands for Persistent Lookup Table. Dialyzer uses the PLT to store the result of its analysis. You can also use a previously constructed PLT that serves as a starting point for Dialyzer. This becomes important because any non-trivial Elixir application would probably involve OTP. If we run Dialyzer on such an application, the analysis will undoubtedly take a long time.
-
-
-Since the OTP libraries will not change, we can always build a “base PLT” and only run Dialyzer on our application, which by comparison will take a much shorter time. The flip side of this is that once you upgrade Erlang and/or Elixir, you must be remember to rebuild the PLT.
-
-
-10.4.2     Dialyxir
-
-
-Traditionally, running Dialyzer involves quite a bit of typing. Thankfully, thanks to the laziness of programmers there are libraries that contain
-`mix`
-tasks that make our lives easier. The one that we are going to use is *Dialyxir*. Dialyxir contains
-`mix`
-tasks that make Dialyzer a joy to use in Elixir projects.
-
-
-Dialyxir can either be installed as a dependency (as we will see later) or it can be installed globally. We will install Dialyxir globally first, so that we can build the PLT table. This is not strictly necessary, but is useful when you don’t want to install Dialyxir as a project dependency:
-
-`git clone https://github.com/jeremyjh/dialyxir`
-`cd dialyxir`
-`mix archive.build``mix archive.install`
-Let’s start using Dialyxir!
-
-
-10.4.3     Building a PLT Table
-
-
-As previously mentioned, we need to build a PLT first. Happily, Dialyxir has a mix task to build a PLT:
-
-`% mix dialyzer.plt`
-Grab a coffee because this will take a while:
-
-`Starting PLT Core Build ... this will take awhile`
-`dialyzer --output_plt /Users/benjamintan/.dialyxir_core_18_1.2.0-rc.1.plt --build_plt --apps erts kernel stdlib crypto public_key -r /usr/local/Cellar/elixir/HEAD/bin/../lib/elixir/../eex/ebin /usr/local/Cellar/elixir/HEAD/bin/../lib/elixir/../elixir/ebin /usr/local/Cellar/elixir/HEAD/bin/../lib/elixir/../ex_unit/ebin /usr/local/Cellar/elixir/HEAD/bin/../lib/elixir/../iex/ebin /usr/local/Cellar/elixir/HEAD/bin/../lib/elixir/../mix/ebin`
-`...`
-`cover:compile_beam_directory/1`
-`cover:modules/0`
-`cover:start/0`
-`fprof:analyse/1`
-`fprof:apply/3`
-`fprof:profile/1`
-`httpc:request/5`
-`httpc:set_options/2`
-`inets:start/2`
-`inets:stop/2`
-`leex:file/2`
-`yecc:file/2`
-`Unknown types:`
-`compile:option/0`
-`done in 2m33.16s``done (passed successfully)`
-You don’t have to worry about “Unknown types” and other warnings as long as the PLT was built successfully.
-
-
-10.5       Software Discrepancies that Dialyzer can Detect
-
-
-In this section, we will create a project to play with. The example project is a simple currency converter that only converts Singapore Dollars to United States dollars. Create the project:
-
-`% mix new dialyzer_playground`
-Open up
-`mix.exs`
-and add Dialyxir:
-
-
-Listing 10.4 Add the dialyxir dependency (mix.exs)
-
-`defmodule DialyzerPlayground.Mixfile do`
-`# ...`
-
-`defp deps do`
-`[{:dialyxir, "~> 0.3", only: [:dev]}]`
-`end``end`
-As usual, remember to run
-`mix deps.get`. Now the fun begins!
-
-
-10.5.1     Catching Type Errors
-
-
-We begin with a simple example that demonstrates how Dialyzer can catch simple type errors. Create
-`lib/bug_1.ex`:
-
-
-Listing 10.5 Cashy.Bug1 has a type error. Can you spot it? (lib/bug\_1.ex)
-
-`defmodule Cashy.Bug1 do`
-
-`def convert(:sgd, :usd, amount) do`
-`{:ok, amount * 0.70}`
-`end`
-
-`def run do`
-`convert(:sgd, :usd, :one_million_dollars)`
-`end`
-`end`
-The
-`convert/3`
-function takes in three arguments. The first two arguments *must* be the atoms
-`:sgd`
-and
-`:usd`
-respectively.
-`amount`
-is assumed to be a number and is used to compute the exchange rate from Singapore dollars to United States dollars. Pretty straightforward stuff.
-
-
-Now imagine that
-`run/1`
-function that could live on another module. It is not inconceivable to have someone use this function wrongly, such as passing in at atom as the last argument to
-`convert/3`, instead of a number.
-
-
-The problem with the code only suffice the moment
-`run/1`
-is executed. Otherwise, this problem might not even surface. It is worthwhile to note that a statically typed language will never allow for code like this. Good thing for us, we have Dialyzer! Let’s run Dialyzer and see what happens:
-
-`% mix dialyzer`
-Here’s the output:
-
-`% mix dialyzer`
-`Compiled lib/bug_1.ex`
-`Generated dialyzer_playground app`
-`...`
-`Proceeding with analysis...`
-`bug_1.ex:7: Function run/0 has no local return`
-`bug_1.ex:8: The call 'Elixir.Cashy.Bug1':convert('sgd','usd','one_million_dollars') will never return since it differs in the 3rd argument from the success typing arguments: ('sgd','usd',number())`
-`done in 0m1.00s``done (warnings were emitted)`
-Dialyzer has found us a problem! “no local return” in Dialyzer-speak means that the function will definitely fail. This usually means that Dialyzer has found a type error and has therefore determined that the function can never return.
-
-
-As it rightly pointed out,
-`convert/3`
-will never return because the arguments that we have given it will cause an
-`ArithmeticError`.
-
-
-10.5.2     Wrong Use of Built-In Functions
-
-
-Let’s examine another case. Create
-`lib/bug_2.ex`:
-
-
-Listing 10.6 Cashy.Bug2 has a wrong use of a built-in function. (lib/bug\_2.ex)
-
-`defmodule Cashy.Bug2 do`
-
-`def convert(:sgd, :usd, amount) do`
-`{:ok, amount * 0.70}`
-`end`
-
-`def convert(_, _, _) do`
-`{:error, :invalid_amount}`
-`end`
-
-`def run(amount) do`
-`case convert(:sgd, :usd, amount) do`
-`{:ok, amount} ->`
-`IO.puts "converted amount is #{amount}"`
-
-`{:error, reason} ->`
-`IO.puts "whoops, #{String.to_atom(reason)}"`
-`end`
-`end`
-`end`
-The first function clause is identical to the one in
-`Cashy.Bug1`. In addition, there is a catch-all clause that returns
-`{:error, :invalid_amount}`. Once again, imagine
-`run/1`
-is called by some client code elsewhere. Can you spot the problem? Let’s see what Dialyzer says:
-
-`% mix dialyzer`
-`...`
-`bug_2.ex:18: The call erlang:binary_to_atom(reason@1::'invalid_amount','utf8') breaks the contract (Binary,Encoding) -> atom() when is_subtype(Binary,binary()), is_subtype(Encoding,'latin1' | 'unicode' | 'utf8')`
-`done in 0m1.02s``done (warnings were emitted)`
-Interesting! There seems to be a problem with:
+```elixir
+git clone https://github.com/jeremyjh/dialyxir
+cd dialyxir
+mix archive.build
+mix archive.install
+```
+让我们开始使用 Dialyxir 吧！
+
+### 10.4.3 构建 PLT 表（建立 PLT 表）
+
+如前所述，我们首先需要构建 PLT。令人高兴的是，Dialyxir 有一个 mix 任务用于构建 PLT：
+
+```elixir
+% mix dialyzer.plt
+```
+准备好咖啡，因为这需要一段时间：
+
+```
+Starting PLT Core Build ... this will take awhile
+dialyzer --output_plt /Users/benjamintan/.dialyxir_core_18_1.2.0-rc.1.plt --build_plt --apps erts kernel stdlib crypto public_key -r /usr/local/Cellar/elixir/HEAD/bin/../lib/elixir/../eex/ebin /usr/local/Cellar/elixir/HEAD/bin/../lib/elixir/../elixir/ebin /usr/local/Cellar/elixir/HEAD/bin/../lib/elixir/../ex_unit/ebin /usr/local/Cellar/elixir/HEAD/bin/../lib/elixir/../iex/ebin /usr/local/Cellar/elixir/HEAD/bin/../lib/elixir/../mix/ebin
+...
+cover:compile_beam_directory/1
+cover:modules/0
+cover:start/0
+fprof:analyse/1
+fprof:apply/3
+fprof:profile/1
+httpc:request/5
+httpc:set_options/2
+inets:start/2
+inets:stop/2
+leex:file/2
+yecc:file/2
+Unknown types:
+compile:option/0
+done in 2m33.16s
+done (passed successfully)
+```
+只要 PLT 构建成功，你就不必担心“未知类型”和其他警告。
+
+### 10.5 Dialyzer 可以检测的软件差异（Dialyzer 能检测的软件问题）
+
+在本节中，我们将创建一个项目来进行实验。示例项目是一个简单的货币转换器，只能将新加坡元转换为美元。创建项目：
+
+```elixir
+% mix new dialyzer_playground
+```
+打开 `mix.exs` 并添加 Dialyxir：
+
+#### 清单 10.4 添加 dialyxir 依赖 (mix.exs)
+
+```elixir
+defmodule DialyzerPlayground.Mixfile do
+# ...
+
+  defp deps do
+    [{:dialyxir, "~> 0.3", only: [:dev]}]
+  end
+end
+```
+像往常一样，记得运行 `mix deps.get`。现在乐趣开始了！
+
+### 10.5.1 捕捉类型错误（捕获类型错误）
+
+我们从一个简单的示例开始，演示 Dialyzer 如何捕捉简单的类型错误。创建 `lib/bug_1.ex`：
+
+#### 清单 10.5 Cashy.Bug1 有一个类型错误。你能发现吗？(lib/bug_1.ex)
+
+```elixir
+defmodule Cashy.Bug1 do
+
+  def convert(:sgd, :usd, amount) do
+    {:ok, amount * 0.70}
+  end
+
+  def run do
+    convert(:sg
+
+d, :usd, :one_million_dollars)
+  end
+end
+```
+`convert/3` 函数接受三个参数。前两个参数 *必须* 是原子 `:sgd` 和 `:usd`。`amount` 被假定为一个数字，并用来计算从新加坡元到美元的汇率。相当直接的东西。
+
+现在想象一下 `run/1` 函数可能存在于另一个模块中。不难想象有人错误地使用这个函数，比如将原子作为 `convert/3` 的最后一个参数，而不是数字。
+
+只有当 `run/1` 被执行时，代码的问题才会显现。否则，这个问题甚至可能不会浮现。值得注意的是，静态类型语言永远不会允许这样的代码。对我们来说幸运的是，我们有 Dialyzer！让我们运行 Dialyzer 看看会发生什么：
+
+```elixir
+% mix dialyzer
+```
+这是输出：
+
+```
+% mix dialyzer
+Compiled lib/bug_1.ex
+Generated dialyzer_playground app
+...
+Proceeding with analysis...
+bug_1.ex:7: Function run/0 has no local return
+bug_1.ex:8: The call 'Elixir.Cashy.Bug1':convert('sgd','usd','one_million_dollars') will never return since it differs in the 3rd argument from the success typing arguments: ('sgd','usd',number())
+done in 0m1.00s
+done (warnings were emitted)
+```
+Dialyzer 发现了一个问题！Dialyzer 说的“无本地返回”意味着该函数肯定会失败。这通常意味着 Dialyzer 发现了一个类型错误，因此确定该函数永远不会返回。
+
+正如它正确指出的，`convert/3` 因为我们给它的参数会导致 `ArithmeticError` 而永远不会返回。
+
+### 10.5.2 错误使用内置函数
+
+让我们检查另一种情况。创建文件 `lib/bug_2.ex`：
+
+清单 10.6 Cashy.Bug2 中错误使用了内置函数。（lib/bug\_2.ex）
+
+```elixir
+defmodule Cashy.Bug2 do
+
+def convert(:sgd, :usd, amount) do
+{:ok, amount * 0.70}
+end
+
+def convert(_, _, _) do
+{:error, :invalid_amount}
+end
+
+def run(amount) do
+case convert(:sgd, :usd, amount) do
+{:ok, amount} ->
+IO.puts "converted amount is #{amount}"
+
+{:error, reason} ->
+IO.puts "whoops, #{String.to_atom(reason)}"
+end
+end
+end
+```
+
+第一个函数子句与 `Cashy.Bug1` 中的完全相同。此外，还有一个捕获所有情况的子句，返回 `{:error, :invalid_amount}`。再次想象 `run/1` 被某处客户端代码调用。你能发现问题所在吗？让我们看看 Dialyzer 的说法：
+
+```
+% mix dialyzer
+...
+bug_2.ex:18: 调用 erlang:binary_to_atom(reason@1::'invalid_amount','utf8') 违反了约定 (Binary,Encoding) -> atom() 当 is_subtype(Binary,binary()), is_subtype(Encoding,'latin1' | 'unicode' | 'utf8')
+执行完毕耗时 0m1.02s（发出了警告）
+```
+
+有趣！这里似乎有一个问题：
 
 `erlang:binary_to_atom(reason@1::'invalid_amount','utf8')`
-It seems to be breaking some form of contract. On line 18, as Dialyzer points out, we are invoking
-`String.to_atom/1`. Seems like this is causing the problem. The contract that
-`erlang:binary_to_atom/2`
-is looking for is
+
+似乎违反了某种形式的合约。在第18行，正如 Dialyzer 所指出的，我们调用了 `String.to_atom/1`。看来这是问题的原因。`erlang:binary_to_atom/2` 正在寻找的合约是：
 
 `(Binary,Encoding) -> atom()`
-What we are supplying as inputs are
-`'invalid_amount' and 'utf8'`
-which work out to be
-`(Atom, Encoding)`. On closer inspection, we should have called
-`Atom.to_string/1`
-instead of
-`String.to_atom/1`. Whoops.
 
+我们提供的输入是 `'invalid_amount' 和 'utf8'`，转换成 `(Atom, Encoding)`。仔细检查后，我们应该调用 `Atom.to_string/1` 而不是 `String.to_atom/1`。哎呀。
 
-10.5.3     Redundant Code
+### 10.5.3 冗余代码
 
+冗余代码阻碍了可维护性。在某些情况下，Dialyzer 可以分析代码路径并发现冗余代码。`lib/bug_3.ex` 提供了这方面的一个例子：
 
-Dead code impedes maintainability. In certain cases, Dialyzer can analyze code paths and discover redundant code.
-`lib/bug_3.ex`
-provides an example of this:
+清单 10.7 Cashy.Bug3 中有一个冗余的代码路径。（lib/bug\_3.ex）
 
+```elixir
+defmodule Cashy.Bug3 do
 
-Listing 10.7 Cashy.Bug3 has a redundant code path. (lib/bug\_3.ex)
+def convert(:sgd, :usd, amount) when amount > 0 do
+{:ok, amount * 0.70}
+end
 
-`defmodule Cashy.Bug3 do`
+def run(amount) do
+case convert(:sgd, :usd, amount) do
+amount when amount <= 0 ->
+IO.puts "whoops, should be more than zero"
+_ ->
+IO.puts "converted amount is #{amount}"
+end
+end
+end
+```
 
-`def convert(:sgd, :usd, amount) when amount > 0 do`
-`{:ok, amount * 0.70}`
-`end`
+这次，我们在 `convert/3` 中添加了一个保护子句，确保只有在 `amount` 大于零时才进行货币转换。现在看看 `run/1`。它有两个子句。其中一个处理 `amount` 小于或等于零的情况。第二个子句处理 `amount` 更大的情况。Dialyzer 对此有何看法？
 
-`def run(amount) do`
-`case convert(:sgd, :usd, amount) do`
-`amount when amount <= 0 ->`
-`IO.puts "whoops, should be more than zero"`
-`_ ->`
-`IO.puts "converted amount is #{amount}"`
-`end`
-`end`
-`end`
-This time, we have added a guard clause to
-`convert/2`, making sure that the currency conversion takes place only when
-`amount`
-is larger than zero. Take a look now at
-`run/1`. It has two clauses. One of them handles the case when
-`amount`
-is lesser or equal to zero. The second clause handles when
-`amount`
-is larger. What does Dialyzer say about this?
+```
+% mix dialyzer
+...
+bug_3.ex:9: Guard test amount@2::{'ok',float()} =< 0 永远不会成功
+执行完毕耗时 0m0.97s（发出了警告）
+```
 
-`% mix dialyzer`
-`...`
-`bug_3.ex:9: Guard test amount@2::{'ok',float()} =< 0 can never succeed`
-`done in 0m0.97s``done (warnings were emitted)`
-Dialyzer has helpfully identified some redundant code! Since we have the guard clause in
-`convert/3`, we can be sure that the
-`amount <= 0`
-case will never happen. Again, this is a trivial example. However, it is not hard to imagine that a programmer could easily not know this behavior and therefore try to cover all the cases, when in fact this is redundant.
+Dialyzer 已经帮助我们识别了一些冗余代码！由于我们在 `convert/3` 中有了保护子句，我们可以确定 `amount <= 0` 的情况永远不会发生。再次强调，这是一个简单的例子。然而，不难想象程序
 
+员可能不了解这种行为，因此尝试覆盖所有情况，实际上这是冗余的。
 
-10.5.4     Type Errors in Guard Clauses
+### 10.5.4 保护子句中的类型错误
 
+在使用保护子句的情况下可能会发生类型错误。保护子句限制了它们包裹的参数的类型。在下一个示例中，该参数是 `amount`。让我们看看 `lib/bug_4.ex`。你可能很容易发现问题所在：
 
-Type errors can occur in the case where guard clauses are used. Guard clauses constrain the types of the arguments that they wrap. In this next example, that argument is
-`amount`. Let’s take a look at
-`lib/bug_4.ex`. You might be able to spot the problem easily:
+清单 10.8 当 run/1 执行时会发生错误。你能猜出为什么吗？（lib/bug\_4.ex）
 
+```elixir
+defmodule Cashy.Bug4 do
 
-Listing 10.8 There will be an error when run/1 executes. Can you guess why? (lib/bug\_4.ex)
+def convert(:sgd, :usd, amount) when is_float(amount) do
+{:ok, amount * 0.70}
+end
 
-`defmodule Cashy.Bug4 do`
+def run do
+convert(:sgd, :usd, 10)
+end
+end
+```
 
-`def convert(:sgd, :usd, amount) when is_float(amount) do`
-`{:ok, amount * 0.70}`
-`end`
+让 Dialyzer 发挥作用：
 
-`def run do`
-`convert(:sgd, :usd, 10)`
-`end`
-`end`
-Let Dialyzer do its thing:
+```
+% mix dialyzer
+...
+bug_4.ex:7: 函数 run/0 没有本地返回
+bug_4.ex:8: 调用 'Elixir.Cashy.Bug4':convert('sgd','usd',10) 永远不会返回，因为它在第三个参数上与成功类型参数不符：('sgd','usd',float())
+执行完毕耗时 0m0.97s（发出了警告）
+```
 
-`% mix dialyzer`
-`...`
-`bug_4.ex:7: Function run/0 has no local return`
-`bug_4.ex:8: The call 'Elixir.Cashy.Bug4':convert('sgd','usd',10) will never return since it differs in the 3rd argument from the success typing arguments: ('sgd','usd',float())`
-`done in 0m0.97s``done (warnings were emitted)`
-If we stare hard enough we would have realized that
-`10`
-is not of type
-`float()`
-and therefore fails the guard clause. An interesting thing about guard clauses is that they will never throw exceptions, which is the whole point since you are specifically allowing only certain kinds of input. However, this might sometimes lead to confusing bugs such as the one above when is seems like
-`10`
-should be allowed past the guard clause.
+如果我们足够仔细，我们会意识到 `10` 不是 `float()` 类型，因此不符合保护子句。关于保护子句的一个有趣之处在于，它们永远不会抛出异常，这正是它们的全部意义，因为你正在特别允许只有某些类型的输入。然而，这有时可能导致类似上面那种令人困惑的错误，当时看起来 `10` 应该被允许通过保护子句。
 
+10.5.5     用一些间接方法让Dialyzer绊倒
 
-10.5.5     Tripping Up Dialyzer with Some Indirection
+在本节的最后一个例子中，我们看一下`Cashy.Bug1`的一个略微修改的版本。创建`lib/bug_5.ex`：
 
+清单 10.9 Dialyzer将无法捕获此错误。 (lib/bug\_5.ex)
 
-In the last example of this section, we look at a slightly modified version of
-`Cashy.Bug1`. Create
-`lib/bug_5.ex`:
+```elixir
+defmodule Cashy.Bug5 do
 
+def convert(:sgd, :usd, amount) do
+amount * 0.70
+end
 
-Listing 10.9 Dialyzer will not be able to catch this bug. (lib/bug\_5.ex)
+def amount({:value, value}) do
+value
+end
 
-`defmodule Cashy.Bug5 do`
+def run do
+convert(:sgd, :usd, amount({:value, :one_million_dollars}))
+end
+end
+```
+现在，看起来很明显，Dialyzer很可能会报告与`Cashy.Bug1`相同的错误。注意，我们在这里只是通过使`amount/1`成为一个函数调用，返回我们想要转换的金额的实际值，从而增加了一层间接性。让我们测试一下我们的假设：
 
-`def convert(:sgd, :usd, amount) do`
-`amount * 0.70`
-`end`
+```shell
+% mix dialyzer
+...
+Proceeding with analysis... done in 0m1.05s done (passed successfully)
+```
+等等，什么？不幸的是，在这种情况下，由于这种间接性，Dialyzer无法检测到这种差异。这是一个完美的过渡到下一个关于类型规范的主题。我们将在那之后回到`Cashy.Bug5`。
 
-`def amount({:value, value}) do`
-`value`
-`end`
+10.6       类型规范
 
-`def run do`
-`convert(:sgd, :usd, amount({:value, :one_million_dollars}))`
-`end`
-`end`
-Now, it would seem obvious that Dialyzer would most likely report the same bugs as it did for
-`Cashy.Bug1`. Notice here that we have merely added a layer of indirection by making the
-`amount/1`
-a function call that returns the actual value of the amount we want to convert. Let’s test our hypothesis:
+我们已经提到，Dialyzer可以在没有你的帮助下愉快地运行。我们已经向你展示了一些Dialyzer可以从`Cashy.Bug1`到`Cashy.Bug4`检测到的软件差异的例子。
 
-`% mix dialyzer`
-`...`
-`Proceeding with analysis... done in 0m1.05s``done (passed successfully)`
-Oh wait, what? Unfortunately in this instance, Dialyzer cannot detect the discrepancy because of this indirection. This is a perfect segue into the next topic on type specifications. We will come back to
-`Cashy.Bug5`
-after that.
+然而，正如`Cashy.Bug5`所示，一切并非都是彩虹和独角兽。虽然Dialyzer可能会报告`passed successfully`，但这并不意味着你的代码没有错误。有些情况下，Dialyzer无法完全自己检测到。
 
+通过一些努力，我们可以帮助Dialyzer揭示难以检测的错误。我们通过添加*类型规范*，或者简称*Typespecs*来做到这一点。
 
-10.6       Type Specifications
+将类型规范添加到你的代码的另一个优点是，它可以作为一种文档形式。特别是对于动态语言，有时候并不明显什么是有效的输入，以及返回值的类型。在本节中，你将学习如何编写你自己的类型规范，不仅为了编写更好的文档，而且为了编写更可靠的代码。
 
+10.6.1 编写类型规范
 
-We have mentioned that Dialyzer can happily run without any help from you. We have shown you some examples of the software discrepancies that Dialyzer can detect from
-`Cashy.Bug1`
-through
-`Cashy.Bug4`.
-
-
-However as
-`Cashy.Bug5`
-has shown, all is not rainbows and unicorns. While Dialyzer could report
-`passed successfully`, that doesn’t mean that your code is free of bugs. There are some cases where Dialyzer cannot detect completely on its own.
-
-
-With some effort, we can help Dialyzer to potentially reveal hard-to-detect bugs. We do this by adding *type specifications*, or *Typespecs* for short.
-
-
-The other advantage of adding type specifications to your code is that it serves as a form of documentation. Especially with dynamic languages, it is sometimes not obvious what are valid inputs and what the type of the return value. In this section, you will learn how to write your own type specifications not only to write better documentation, but also to write more reliable code.
-
-
-10.6.1     Writing Type Specifications
-
-
-The best way to show you how to work with type specifications is through a few examples. The format of defining a type specification is:
+最好的方式是通过一些例子来向你展示如何使用类型规范。定义类型规范的格式是：
 
 `@spec function_name(type1, type2) :: return_type`
-The format should be self-explanatory. We will cover what are valid values of types later on (`type1`,
-`type2`
-and
-`return_type`). Here are some of the types and type unions that have already been pre-defined (these will make more sense when you work through the examples). These are not exhaustive, but rather a good sampling of the available types.
+这个格式应该是不言自明的。我们稍后会讲解什么是有效的类型值（`type1`，`type2`和`return_type`）。下面是一些已经预定义的类型和类型联合（当你通过例子学习时，这些会更有意义）。这些并不是详尽无遗的，而只是可用类型的一个很好的样本。
 
-
-
-
-|  |  |
+| 类型 | 描述 |
 | --- | --- |
-| 
-Type
- | 
-Description
- |
-|
-`term`
-| This is defined as
-`any`.
-`term`
-represents any valid Elixir term, and this also includes functions with
-`_`
-as the argument. |
-|
-`boolean`
-| This is defined as the union of both Boolean types –
-`false | true`.
-`char`: This is defined as the range of valid characters:
-`0..0x10ffff`. Note that
-`..`
-is the range operator. |
-|
-`number`
-| This is defined as the union of integers and floats –
-`integer | float`. |
-|
-`binary`
-| Use this for Elixir strings. |
-|
-`char_list`
-| Use this for Erlang strings. This is defined as
-`[char]`. |
-|
-`list`
-| This is defined as
-`[any]`. You can always constrain the type if the list. For example,
-`[number]`. |
-|
-`fun`
-|
-`(... -> any)`
-represents *any* anonymous function. You might want to constrain this based the functions arity and return type. For example,
-`(() -> integer)`
-is an arity-zero anonymous function that returns an integer, while
-`(integer, atom -> [boolean])`
-is an arity-two function that takes an integer and an atom respectively, and returns a list of Booleans. |
-|
-`pid`
-| A process id |
-|
-`tuple`
-| Any kind of tuple. Other valid options are
-`{}`
-and
-`{:ok, binary}`. |
-|
-`map`
-| Any kind of map. Other valid options are
-`%{}`
-and
-`%{atom => binary}`
-|
+| `term` | 这被定义为`any`。`term`代表任何有效的Elixir项，这也包括带有`_`作为参数的函数。 |
+| `boolean` | 这被定义为两种布尔类型的联合 - `false | true`。`char`：这被定义为有效字符的范围：`0..0x10ffff`。注意`..`是范围操作符。 |
+| `number` | 这被定义为整数和浮点数的联合 - `integer | float`。 |
+| `binary` | 用这个表示Elixir字符串。 |
+| `char_list` | 用这个表示Erlang字符串。这被定义为`[char]`。 |
+| `list` | 这被定义为`[any]`。你总是可以约束列表的类型。例如，`[number]`。 |
+| `fun` | `(... -> any)`表示*任何*匿名函数。你可能想要根据函数的元数和返回类型来约束这个。例如，`(() -> integer)`是一个返回整数的元数为零的匿名函数，而`(integer, atom -> [boolean])`是一个元数为二的函数，它分别接受一个整数和一个原子，并返回一个布尔值列表。 |
+| `pid` | 进程id |
+| `tuple` | 任何类型的元组。其他有效的选项是`{}`和`{:ok, binary}`。 |
+| `map` | 任何类型的映射。其他有效的选项是`%{}`和`%{atom => binary}`。 |
 
+表 10.1 一些可用于类型规范的类型
 
-Table 10. 1 Some of the available types for use in type-specifications
+接下来的几个例子会让你有更好的感觉。
 
+示例：加法
 
-The next few examples will give you a better feel.
+让我们从一个简单的加法函数开始，这个函数接受两个数字并返回另一个数字。这是一种可能的类型规范：
 
+清单 10.10 add/2的一种可能的类型规范
 
-Example: Addition
+```elixir
+@spec add(integer, integer) :: integer
+def add(x, y) do
+x + y
+end
+```
+就目前而言，`add/2`可能过于严格。我们可能还想包括浮点数*或*整数。写的方式如下：
 
+清单 10.11 包括浮点数和整数作为输入参数和返回值
 
-Let’s start with a simple add function that takes two numbers and returns another number. This is one possible type specification:
+```elixir
+@spec add(integer | float, integer | float) :: integer | float
+def add(x, y) do
+x + y
+end
+```
+幸运的是，我们可以使用内置的简写类型`number`，它被定义为`integer | float`。`|`表示`number`是一个联合类型。顾名思义，联合类型是由两种或多种类型组成的类型。联合类型可以应用于输入类型和返回值的类型。
 
+清单 10.12 使用number简写表示integer | float
 
-Listing 10.10 A possible type specification for add/2
+```elixir
+@spec add(number, number) :: number
+def add(x, y) do
+x + y
+end
+```
+我们将在学习如何定义自己的类型时，很快看到更多的联合类型的例子。
 
-`@spec add(integer, integer) :: integer`
-`def add(x, y) do`
-`x + y``end`
-As it stands,
-`add/2`
-might be too restrictive. We might also want to include floats *or* integers. The way to write that would be:
+示例：List.fold/3
 
+让我们尝试解决一些更具挑战性的问题：`List.fold/3`。这个函数通过一个函数从左边减少给定的列表。它还需要一个累加器的初始值。这是函数的工作方式：
 
-Listing 10.11 Including both floats and numbers as input arguments and return values
+```elixir
+iex> List.foldl([1, 2, 3], 10, fn (x, acc) -> x + acc end)
+```
+如预期，函数将返回`16`。第一个参数是列表，然后是累加器的初始值。最后一个参数是执行每一步减少的函数。这是函数签名（取自`List`源代码）：
 
-`@spec add(integer | float, integer | float) :: integer | float`
-`def add(x, y) do`
-`x + y``end`
-Thankfully, we can use the built-in shorthand type
-`number`, which is defined as
-`integer | float`. The
-`|`
-means that
-`number`
-is a union type. As the name suggests, a union type is a type that is made up of two or more types. The union type can apply to both input types and the types of return values.
+清单 10.13 List.foldl的函数签名
 
+```elixir
+def foldl(list, acc, function)
+when is_list(list) and is_function(function) do
+# the implementation is not important here
+end
+```
+`List.foldl/3`已经将`list`的类型限制为列表，这是由于`is_list/1`守卫子句。然而，列表的元素可以是任何有效的Elixir项。同样，`function`需要是一个实际的函数。`function`必须是二元的，其中第一个参数的类型与`elem`相同，第二个参数的类型与`acc`相同。最后，这个函数的返回结果应该与`acc`的类型相同。指定`List.foldl/3`的类型规范的一种可能的方式可能是：
 
-Listing 10.12 Using the number shorthand to represent integer | float
+清单 10.14 编写List.foldl/3类型规范的一种可能（但不是很有帮助）的方式
 
-`@spec add(number, number) :: number`
-`def add(x, y) do`
-`x + y``end`
-We will see more examples of union types soon when we learn how to define our own types.
-
-
-Example: List.fold/3
-
-
-Let’s try to tackle something more challenging:
-`List.fold/3`. This function reduces the given list from the left with a function. It also requires a starting value for the accumulator. Here is how the function works:
-
-`iex> List.foldl([1, 2, 3], 10, fn (x, acc) -> x + acc end)`
-As expected, the function will return
-`16`. The first argument is the list, followed by the starting value of the accumulator. The last argument is the function that performs each step of the reduction. Here is the function signature (taken from the
-`List`
-source code):
-
-
-Listing 10.13 The function signature of List.foldl
-
-`def foldl(list, acc, function)`
-`when is_list(list) and is_function(function) do`
-`# the implementation is not important here``end`
-`List.foldl/3`
-already constrains the type of
-`list`
-to be well, a list, due to the
-`is_list/1`
-guard clause. However, the elements of the list can be any valid Elixir term. The same goes for
-`function`
-needing to be an actual function.
-`function`
-has to be an arity of two, where the first argument is the same type as
-`elem`
-and the second argument the same type as
-`acc`. Finally, the return result of this function should be the same type as
-`acc`. One possible way to specify the type specification of
-`List.foldl/3`
-could be:
-
-
-Listing 10.14 One possible (but not very helpful) way to writing the type specification of List.foldl/3
-
-`@spec foldl([any], any, (any, any -> any)) :: any`
-`def foldl(list, acc, function)`
-`when is_list(list) and is_function(function) do`
-`# the implementation is not important here``end`
-While there is technically nothing wrong with this type specification as far as Dialyzer is concerned, it doesn’t show the relation between the types between the input arguments and the return value. We can use type variables with no restriction given as arguments to the function like so:
+```elixir
+@spec foldl([any], any, (any, any -> any)) :: any
+def foldl(list, acc, function)
+when is_list(list) and is_function(function) do
+# the implementation is not important here
+end
+```
+虽然从Dialyzer的角度来看，这个类型规范在技术上没有什么问题，但它并没有显示输入参数和返回值之间的类型关系。我们可以使用没有限制的类型变量作为函数的参数，如下所示：
 
 `@spec function(arg) :: arg when arg: var`
-Note the
-`var`, which means any variable. Therefore, we can supply better variable names to the type specification like so:
+注意`var`，它表示任何变量。因此，我们可以向类型规范提供更好的变量名，如下所示：
 
+清单 10.15 在类型规范中提供更好的变量名
 
-Listing 10.15 Providing better variable names in the type specification
+```elixir
+@spec foldl([elem], acc, (elem, acc -> acc)) :: acc when
+elem: var, acc: var
+def foldl(list, acc, function)
+when is_list(list) and is_function(function) do
+# the implementation is not important here
+end
+```
 
-`@spec foldl([elem], acc, (elem, acc -> acc)) :: acc when`
-`elem: var, acc: var`
-`def foldl(list, acc, function)`
-`when is_list(list) and is_function(function) do`
-`# the implementation is not important here``end`
-Example: Map Function
+示例：映射函数
 
-
-We can also use guards can be used to restrict type variables given as arguments to the function like so:
+我们也可以使用守卫来限制作为函数参数的类型变量，如下所示：
 
 `@spec function(arg) :: arg when arg: atom`
-In this example, we have our own implementation of
-`Enum.map/2`. Create
-`lib/my_enum.ex`. Notice the type specifications of the individual arguments and return result.
+在这个例子中，我们有自己的`Enum.map/2`实现。创建`lib/my_enum.ex`。注意单个参数和返回结果的类型规范。
 
+清单 10.16 映射函数的类型规范 (lib/my\_enum.ex0
 
-Listing 10.16 A type specification for the map function (lib/my\_enum.ex0
+```elixir
+defmodule MyEnum do
 
-`defmodule MyEnum do`
+@spec map(f, list_1) :: list_2 when
+f: ((a) -> b),
+list_1: [a],
+list_2: [b],
+a: term,
+b: term
+def map(f, [h|t]), do: [f.(h)| map(f, t)]
 
-`@spec map(f, list_1) :: list_2 when`
-`f: ((a) -> b),`
-`list_1: [a],`
-`list_2: [b],`
-`a: term,`
-`b: term`
-`def map(f, [h|t]), do: [f.(h)| map(f, t)]`
+def map(f, []) when is_function(f, 1), do: []
+end
+```
+从类型规范中，我们声明：
 
-`def map(f, []) when is_function(f, 1), do: []`
-`end`
-From the type specification, we are declaring that:
+- `f`（`map/2`的第一个参数）是一个单元函数，它接受一个项并返回另一个项。
+- `list_1`（`map/2`的第二个参数）和`list_2`（`map/2`的返回结果）是项的列表。
 
+我们也费了一番功夫来命名`f`的输入和输出类型。虽然这并不是严格必要的，但明确地放置`a`和`b`表示`f`在类型`a`上操作并返回类型`b`，并且`map/2`接受类型`a`的列表作为输入并输出类型`b`的列表。如你所见，类型规范可以传达很多信息。
 
-·     
-`f`
-(the first argument to
-`map/2`
-is a single-arity function that takes in a term and return another term
+10.7 编写你自己的类型
 
+你可以使用`@type`定义你自己的类型。例如，让我们为RGB颜色代码创建一个自定义类型。创建`lib/hexy.ex`：
 
-·     
-`list_1`
-(the second argument to
-`map/2`) and
-`list_2`
-(the return result of
-`map/2`
-are a list of terms.
+清单 10.17 使用@type定义自定义类型 (lib/hexy.ex)
 
+```elixir
+defmodule Hexy do
+@type rgb() :: {0..255, 0..255, 0..255}           #1
+@type hex() :: binary                            #2
 
-We have also taken pains to name the input and output types of
-`f`. While this is not strictly necessary, having explicitly put
-`a`
-and
-`b`
-says that
-`f`
-operates on a type
-`a`
-and returns a type
-`b`, and that
-`map/2`
-takes as input a list of type
-`a`
-and outputs a list of type
-`b`. As you can see, type specifications can convey a lot of information.
+@spec rgb_to_hex(rgb) :: hex                      #3
+def rgb_to_hex({r, g, b}) do
+[r, g, b]
+|> Enum.map(fn x -> Integer.to_string(x, 16) |> String.rjust(2, ?0) end)
+|> Enum.join
+end
+end
+```
+#1 RGB颜色代码的类型别名
 
+#2 Hex颜色代码的类型别名
 
-10.7       Writing your own Types
+#3 在规范中使用自定义类型定义
 
+我们本可以只指定`@spec rgb_to_hex(tuple) :: binary`，但这并不能传达很多信息，也不能对输入参数进行很多约束，除了说预期一个元组。在这种情况下，甚至一个空的元组都是可以接受的。
 
-You can define your own types using
-`@type`. For example, let’s come up with a custom type for RGB color codes. Create
-`lib/hexy.ex`:
+相反，我们指定了一个有三个元素的元组，并进一步指定每个元素都是范围在0到255的整数。最后，我们给类型一个描述性的名字，比如`rgb`。对于`hex`，我们没有简单地称之为`binary`（在Elixir中是一个字符串），而是将其别名为`hex`，以便更具描述性。
 
+10.7.1 多重返回类型和无主体函数子句
 
-Listing 10.17 Using @type to define custom types (lib/hexy.ex)
+函数由多个返回类型组成是很常见的。在这种情况下，我们可以使用*无主体函数子句*来将类型注解组合在一起。考虑以下情况：
 
-`defmodule Hexy do`
-`@type rgb() :: {0..255, 0..255, 0..255}           #1`
-`@type hex() :: binary                             #2`
+清单 10.18 使用无主体函数子句并将类型规范附加到该子句上 (lib/hexy.ex)
 
-`@spec rgb_to_hex(rgb) :: hex                      #3`
-`def rgb_to_hex({r, g, b}) do`
-`[r, g, b]`
-`|> Enum.map(fn x -> Integer.to_string(x, 16) |> String.rjust(2, ?0) end)`
-`|> Enum.join`
-`end``end`
-#1 Type alias for a RGB color code
+```elixir
+defmodule Hexy do
+@type rgb() :: {0..255, 0..255, 0..255}
+@type hex() :: binary
 
+@spec rgb_to_hex(rgb) :: hex | {:error, :invalid}
+def rgb_to_hex(rgb) #1
 
-#2 Type alias for a Hex color code
+def rgb_to_hex({r, g, b}) do
+[r, g, b]
+|> Enum.map(fn x -> Integer.to_string(x, 16) |> String.rjust(2, ?0) end)
+|> Enum.join
+end
 
+def rgb_to_hex(_) do
+{:error, :invalid}
+end
+end
+```
+#1 无主体函数子句
 
-#3 Using the custom type definitions in the specification
+这次，`rgb_to_hex/1`有两个子句。第二个子句是后备情况。这个后备情况总是会返回`{:error, :invalid}`。这意味着我们必须更新我们的类型规范。
 
-
-We could have just specify
-`@spec rgb_to_hex(tuple) :: binary`, but that doesn’t convey a lot of information, neither does it constrain the input arguments much except to say that a tuple is expected. In this case, even an empty one is acceptable.
-
-
-Instead, specified a tuple with three elements, and further specified that each element are integers which range from 0 to 255. Finally, we gave the type a descriptive name like
-`rgb`. For
-`hex`, instead of calling it simply
-`binary`
-(a string in Elixir), we aliased it to
-`hex`
-just to be more descriptive.
-
-
-10.7.1     Multiple Return Types and Bodiless Function Clauses
-
-
-It is not uncommon to have functions that consist of multiple return types. In this case, we can use *bodiless function clause*s to group type annotations together. Consider the following:
-
-
-Listing 10.18 Using a bodiless function clause and attaching the type specification to that (lib/hexy.ex)
-
-`defmodule Hexy do`
-`@type rgb() :: {0..255, 0..255, 0..255}`
-`@type hex() :: binary`
-
-`@spec rgb_to_hex(rgb) :: hex | {:error, :invalid}`
-`def rgb_to_hex(rgb) #1`
-
-`def rgb_to_hex({r, g, b}) do`
-`[r, g, b]`
-`|> Enum.map(fn x -> Integer.to_string(x, 16) |> String.rjust(2, ?0) end)`
-`|> Enum.join`
-`end`
-
-`def rgb_to_hex(_) do`
-`{:error, :invalid}`
-`end``end`
-#1 The bodiless function clause
-
-
-This time,
-`rgb_to_hex/1`
-has two clauses. The second clause is the fallback case. This fallback case will always return
-`{:error, :invalid}`. This means that we have to update our type specification.
-
-
-Instead of writing it above the first function clause like we did in the previous example, we can create a *bodiless* function clause. One thing to note is how we defined the clause. This will work:
+我们可以创建一个*无主体*函数子句，而不是像我们在前一个例子中那样在第一个函数子句上面写它。需要注意的一点是我们如何定义子句。这样会起作用：
 
 `def rgb_to_hex(rgb)`
-While this will *not* work:
+而这样*不会*起作用：
 
 `def rgb_to_hex({r, g, b})`
-If you tried to compile the file, you would get an error message:
+如果你试图编译文件，你会得到一个错误消息：
 
 `** (CompileError) lib/hexy.ex:7: can use only variables and \\ as arguments of bodiless clause`
-Having a bodiless function clause is useful to group all the possible type specifications in one place, which saves you from sprinkling the type specifications on every function clause.
+有一个无主体函数子句可以将所有可能的类型规范集中在一个地方，这样就可以避免在每个函数子句上都撒上类型规范。
 
+### 10.7.2 揭示Elixir中的类型，第二部分
 
-10.7.2     Revealing Types in Elixir, Part II
+除了`i/1`，还有另一个方便的`iex`助手：`t/1`。`t/1`打印给定模块或给定函数/元数对的类型。如果你想了解模块中使用的类型（可能是自定义的）的更多信息，这很方便。例如，让我们研究一下在`Enum`中找到的类型：
 
+```elixir
+iex> t Enum
+@type t() :: Enumerable.t()
+@type element() :: any()
+@type index() :: non_neg_integer()
+@type default() :: any()
+```
+在这里，我们可以看到`Enum`有四个定义的类型。`Enumerable.t`看起来很有趣。`Enumerable`模块也有一堆定义的类型：
 
-Besides
-`i/1`, there is another handy
-`iex`
-helper:
-`t/1`.
-`t/1`
-prints the types for the given module or for the given function/arity pair. This is handy if you wanted to know more about the types (possibly custom) used in a module. For example, let’s investigate the types found in
-`Enum`:
+```elixir
+iex> t Enumerable
+@type acc() :: {:cont, term()} | {:halt, term()} | {:suspend, term()}
+@type reducer() :: (term(), term() -> acc())
+@type result() :: {:done, term()} | {:halted, term()} | {:suspended, term(), continuation()}
+@type continuation() :: (acc() -> result())
+@type t() :: term()
+```
+10.7.3 回到Bug #5
 
-`iex> t Enum`
-`@type t() :: Enumerable.t()`
-`@type element() :: any()`
-`@type index() :: non_neg_integer()``@type default() :: any()`
-Here, we can see that
-`Enum`
-has four defined types.
-`Enumerable.t`
-looks interesting. The
-`Enumerable`
-module also has a bunch of defined types:
+在本章结束之前，让我们如约回到`Cashy.Bug5`。没有任何类型规范，Dialyzer无法找到明显的错误。然而，现在让我们添加类型规范：
 
-`iex> t Enumerable`
-`@type acc() :: {:cont, term()} | {:halt, term()} | {:suspend, term()}`
-`@type reducer() :: (term(), term() -> acc())`
-`@type result() :: {:done, term()} | {:halted, term()} | {:suspended, term(), continuation()}`
-`@type continuation() :: (acc() -> result())``@type t() :: term()`
-10.7.3     Back to Bug #5
+清单 10.19 添加类型规范到Cashy.Bug5 (lib/bug\_5.ex)
 
+```elixir
+defmodule Cashy.Bug5 do
 
-Before we end of this chapter, let’s come back to
-`Cashy.Bug5`
-as promised. Without any type specifications, Dialyzer was unable to find the obvious bug. However, let’s add in the type specifications now:
+@type currency() :: :sgd | :usd
 
+@spec convert(currency, currency, number) :: number
+def convert(:sgd, :usd, amount) do
+amount * 0.70
+end
 
-Listing 10. 19 Adding type specifications to Cashy.Bug5 (lib/bug\_5.ex)
+@spec amount({:value, number}) :: number
+def amount({:value, value}) do
+value
+end
 
-`defmodule Cashy.Bug5 do`
+def run do
+convert(:sgd, :usd, amount({:value, :one_million_dollars}))
+end
+end
+```
+这次当我们运行Dialyzer时，它显示了一个我们*没有*预期的错误，以及一个我们之前预期但没有得到的错误：
 
-`@type currency() :: :sgd | :usd`
+```shell
+bug_5.ex:22: The specification for 'Elixir.Cashy.Bug5':convert/3 states that the function might also return integer() but the inferred return is float()
 
-`@spec convert(currency, currency, number) :: number`
-`def convert(:sgd, :usd, amount) do`
-`amount * 0.70`
-`end`
+bug_5.ex:32: Function run/0 has no local return
+bug_5.ex:33: The call 'Elixir.Cashy.Bug5':amount({'value','one_million_dollars'}) breaks the contract ({'value',number()}) -> number()
+done in 0m1.05s
+done (warnings were emitted)
+```
+让我们先处理第二个，更直接的错误。由于我们传入的是一个原子（`:one_million_dollars`）而不是一个数字，Dialyzer正确地抱怨。
 
-`@spec amount({:value, number}) :: number`
-`def amount({:value, value}) do`
-`value`
-`end`
-
-`def run do`
-`convert(:sgd, :usd, amount({:value, :one_million_dollars}))`
-`end`
-`end`
-This time when we run Dialyzer, it shows an error that we *didn’t* expect, and one we expected but didn’t get previously:
-
-`bug_5.ex:22: The specification for 'Elixir.Cashy.Bug5':convert/3 states that the function might also return integer() but the inferred return is float()`
-
-`bug_5.ex:32: Function run/0 has no local return`
-`bug_5.ex:33: The call 'Elixir.Cashy.Bug5':amount({'value','one_million_dollars'}) breaks the contract ({'value',number()}) -> number()`
-`done in 0m1.05s``done (warnings were emitted)`
-Let’s deal with the second, more straightforward error first. Since we are passing in an atom (`:one_million_dollars`) instead of a number, Dialyzer rightly complains.
-
-
-What about the second error? It is saying that our type specifications say that an
-`integer`
-could be returned, but what Dialyzer has inferred is that the function only returns
-`float`. Now when we inspect the body of the function, we see:
+那么第二个错误呢？它说我们的类型规范表明函数可能会返回一个`integer`，但Dialyzer推断出的是函数只返回`float`。现在当我们检查函数的主体时，我们看到：
 
 `amount * 0.70`
-Of course! Multiplying with a float will always return a float! That is why Dialyzer was complaining. This is nice because Dialyzer is able to check our type specifications in some cases for obvious errors.
+当然！与浮点数相乘总是会返回一个浮点数！这就是为什么Dialyzer会抱怨。这很好，因为Dialyzer能够在某些情况下检查我们的类型规范是否存在明显的错误。
 
+10.8 练习
 
-10.8       Exercises
+1. 尝试使用`Cashy.Bug1`到`Cashy.Bug5`，并尝试添加错误的类型规范。看看错误消息是否对你有意义。一个更难的练习是设计一个有明显错误的代码，但Dialyzer无法捕获这个错误。这是我们在`Cashy.Bug5`中做过的事情。
 
+2. 想象你正在编写一个纸牌游戏。一张牌由花色和值组成。为牌、花色和牌的值提出类型。让你开始：
 
-1.  Play around with
-`Cashy.Bug1`
-through
-`Cashy.Bug5`
-and try to add erroneous type specifications. See if the error messages make sense to you. A harder exercise is to devise code that has an obvious error but Dialyzer fails to catch the bug. This is something that we have done in
-`Cashy.Bug5`.
+```elixir
+@type card :: {suit(), value()} 
+@type suit :: <FILL THIS IN> 
+@type value :: <FILL THIS IN>
+```
+3. 尝试为一些内置函数指定类型。一个好的开始是`List`和`Enum`模块。一个好的灵感来源是Erlang/OTP（是的，Erlang！）的代码库。语法稍有不同，但不应该对你构成主要的障碍。
 
+10.9 总结
 
-2.  Imagine you are writing a card game. A card consists of a suit and a value. Come up with types for a card, a suit and the cards value. To get you started:
+Dialyzer已经在生产中得到了很好的效果。例如，它发现了OTP中以前未被发现的软件差异。虽然它不是银弹，但Dialyzer提供了一些静态类型检查器的优点，比如Haskell。
 
-`@type card :: {suit(), value()} @type suit :: <FILL THIS IN> @type value :: <FILL THIS IN>`
-3.  Try your hand at specifying the types for some built-in functions. A good place to start is the
-`List`
-and
-`Enum`
-module. A good source of inspiration is the Erlang/OTP (yes, Erlang!) code base. The syntax is slightly different, but should pose no major obstacle for you.
+在你的函数中包含类型不仅可以作为文档，还可以让Dialyzer在发现差异时更准确。作为一个额外的好处，Dialyzer也可以指出你在类型规范中是否犯了错误。在本章中，我们学习了：
 
+- 成功类型，Dialyzer使用的类型推断机制
+- 如何使用Dialyzer并解释它有时难以理解的错误消息
+- 通过提供类型规范和守卫，如`is_function(f, 1)`和`is_list(l)`，如何提高Dialyzer的准确性
 
-10.9       Summary
-
-
-Dialyzer has been used in production to great effect. It has discovered software discrepancies in OTP, for example, that hasn’t been discovered before. While it is no silver bullet, Dialyzer provides some of the benefits of a static type checker that languages such as Haskell have.
-
-
-Including types in your functions not only serve as documentation, it also allows Dialyzer to be more accurate in spotting discrepancies. As an added benefit, Dialyzer can also point out if you have made a mistake in the type specification. In this chapter, we learnt about:
-
-
-·      Success typings, the type inference mechanism that Dialyzer uses
-
-
-·      How to use Dialyzer and interpret its sometimes cryptic error messages
-
-
-·      How to increase the accuracy of Dialyzer by providing type specifications and guards like
-`is_function(f, 1)`
-and
-`is_list(l)`
-
-
-In the next chapter, we look at testing tools that have been written specially for the Erlang eco-system. These tools are not the run of the mill unit-testing tools. These power tools can generate test cases based on general properties that you define and hunt down concurrency errors.
-
-
-
-
-
+在下一章中，我们将看一下为Erlang生态系统专门编写的测试工具。这些工具不是普通的单元测试工具。这些强大的工具可以根据你定义的一般属性生成测试用例，并找出并发错误。
