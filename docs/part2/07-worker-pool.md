@@ -999,70 +999,287 @@ iex(9)> {{:value, head}, q} = :queue.out(q)
 ```
 哎呀！对于一个空队列，返回值是一个包含 `:empty` 作为第一个元素的元组。这就结束了关于使用队列的简短间歇，你需要理解接下来的例子。
 
+7.2.7 回到排队工作进程
+
+接下来，我们在回调函数的调用中添加了 `block` 和 `timeout`。但是，#2中的 `make_ref` 是做什么的呢？为了回答这个问题，我们需要查看回调的更新实现：
+
+清单 7.22 lib/pooly/pool_server.ex - 处理等待的消费者
+
+```elixir
+defmodule Pooly.PoolServer do
+  # 回调
+  def handle_call({:checkout, block}, {from_pid, _ref} = from, state) do
+    %{worker_sup: worker_sup,
+      workers: workers,
+      monitors: monitors,
+      waiting: waiting,
+      overflow: overflow,
+      max_overflow: max_overflow} = state # 1
+
+    case workers do
+      [worker|rest] ->
+        # …
+
+      [] when max_overflow > 0 and overflow < max_overflow ->
+        # …
+
+      [] when block == true ->                                 #2
+        ref = Process.monitor(from_pid)
+        waiting = :queue.in({from, ref}, waiting)               #2
+        {:noreply, %{state | waiting: waiting}, :infinity}
+
+      [] ->
+        {:reply, :full, state};
+    end
+  end
+end
+```
+
+#1 更新状态以包括等待
+
+#2 将等待的消费者添加到队列中。
+
+我们增加了两个东西：
+
+- `waiting` 添加到状态中
+- 处理消费者愿意阻塞的情况
+
+让我们处理溢出的情况，并且有一个消费者请求工作者时愿意等待的情况。这种情况在 #3 中有覆盖。
+
+处理愿意阻塞的消费者
+
+当消费者愿意阻塞时，我们首先监视它。这是因为如果它由于某种原因崩溃，我们必须知道，并将其从队列中移除。
+
+接下来，我们在 `waiting` 队列中添加一个形式为 `{from, ref}` 的元组。`from` 是回调中的同一个 `from`。注意 `from` 实际上是一个*元组*，包含消费者 pid 和一个标签的元组，标签本身是一个引用。
+
+最后，注意回复实际上是 `:noreply`，超时时间为 `:infinity`。返回 `:noreply` 意味着必须从*别处*调用 `GenServer.reply(from_pid, message)`。由于我们不知道必须等待多长时间，我们传入 `:infinity`。
+
+*哪里* 我们需要调用 `GenServer.reply/2`？换句话说，我们需要何时回复消费者进程？在工作者签入时！是时候更新 `handle_checkin/2` 了。这次，我们将使用 `waiting` 队列和模式匹配：
+
+清单 7.23 lib/pooly/pool_server.ex - 处理愿意阻塞的消费者签入
+
+```elixir
+defmodule Pooly.PoolServer do
+  # 私有函数
+  def handle_checkin(pid, state) do
+    %{worker_sup: worker_sup,
+      workers: workers,
+      monitors: monitors,
+      waiting: waiting,
+      overflow: overflow} = state
+
+    case :queue.out(waiting) do
+      {{:value, {from, ref}}, left} ->
+        true = :ets.insert(monitors, {pid, ref})
+        GenServer.reply(from, pid)                           #1
+        %{state | waiting: left}
+
+      {:empty, empty} when overflow > 0 ->
+        :ok = dismiss_worker(worker_sup, pid)
+        %{state | waiting: empty, overflow: overflow-1}
+
+      {:empty, empty} ->
+        %{state | waiting: empty, workers: [pid|workers], overflow: 0}
+    end
+  end
+end
+```
+
+#1 当有可用的工作者时回复消费者进程
+
+根据队列的输出，我们有三种情况需要处理。第一种情况是队列不为空。这意味着我们至少有一个消费者进程在等待工作者。我们向 `monitors` ETS 表中插入
+
+一个三元素元组。现在，我们终于可以通过执行 `GenServer.reply/2` 告诉消费者进程我们有一个可用的工作者了。
+
+第二种情况是当前没有等待的消费者，但我们处于溢出状态。这意味着我们只需要将 `overflow` 计数减少 1。
+
+最后一种情况是当前没有等待的消费者，我们*不*处于溢出状态。对于这种情况，我们可以将工作者重新添加到 `workers` 字段中。
+
+从工作者退出中获取工作者
+
+等待的消费者还有另一种方式可以获得工作者，那就是如果其他工作者进程退出。修改很简单。前往 `handle_worker_exit/2` 并修改 `handle_worker_exit/2`：
+
+清单 7.24 lib/pooly/pool_server.ex - 处理工作者退出
+
+```elixir
+defmodule Pooly.PoolServer do
+  # 私有函数
+  defp handle_worker_exit(pid, state) do
+    %{worker_sup: worker_sup,
+      workers: workers,
+      monitors: monitors,
+      waiting: waiting,
+      overflow: overflow} = state
+
+    case :queue.out(waiting) do
+      {{:value, {from, ref}}, left} ->
+        new_worker = new_worker(worker_sup)
+        true = :ets.insert(monitors, {new_worker, ref})
+        GenServer.reply(from, new_worker)
+        %{state | waiting: left}
+
+      {:empty, empty} when overflow > 0 ->
+        %{state | overflow: overflow-1, waiting: empty}
+
+      {:empty, empty} ->
+        workers = [new_worker(worker_sup) | workers]
+        %{state | workers: workers, waiting: empty}
+    end
+  end
+end
+```
+
+与 `handle_checkin/2` 类似，我们使用来自 `:queue.out/1` 的结果进行模式匹配。第一种情况是我们有一个等待的消费者进程。由于工作者崩溃或退出，我们简单地创建一个新的，并将其交给消费者进程。其余情况相当直观。
+
+7.2.8        尝试运行
+
+现在来看看我们辛苦劳动的成果。这样配置池：
+
+```elixir
+defmodule Pooly do
+
+def start(_type, _args) do
+pools_config =
+[
+[name: "Pool1",
+mfa: {SampleWorker, :start_link, []},
+size: 2,
+max_overflow: 1
+],
+[name: "Pool2",
+mfa: {SampleWorker, :start_link, []},
+size: 3,
+max_overflow: 0
+],
+[name: "Pool3",
+mfa: {SampleWorker, :start_link, []},
+size: 4,
+max_overflow: 0
+]
+]
+
+start_pools(pools_config)
+end
+end
+```
+
+这里，只有 Pool 1 配置了溢出处理。打开一个新的 `iex` 会话：
+
+```elixir
+% iex –S mix
+iex(1)> w1 = Pooly.checkout("Pool1")
+#PID<0.97.0>
+
+iex(2)> w2 = Pooly.checkout("Pool1")
+#PID<0.96.0>
+
+iex(3)> w3 = Pooly.checkout("Pool1")
+#PID<0.111.0>
+```
+
+最大溢出设置为 1，池子可以处理一个额外的工作。当您尝试签出另一个工作时会发生什么？客户端将无限期阻塞或超时，这取决于您尝试签出工作的方式。例如，这样做将无限期阻塞：
+
+```elixir
+iex(4)> Pooly.checkout("Pool1", true, :infinity)
+```
+
+另一方面，这样做将在五秒后超时：
+
+```elixir
+iex(4)> Pooly.checkout("Pool1", true, 5000)
+```
+
+如果您按照示例操作，您会发现会话被阻塞。在我们继续之前，打开 `lib/pooly/sample_worker.ex`。添加 `work_for/2` 函数及其相应的回调：
+
+清单 7.25 lib/pooly/sample\_worker.ex - 使 SampleWorker 能够模拟处理一定时间的请求
+
+```elixir
+defmodule SampleWorker do
+use GenServer
+
+# ...
+
+def work_for(pid, duration) do
+GenServer.cast(pid, {:work_for, duration})
+end
+
+def handle_cast({:work_for, duration}, state) do
+:timer.sleep(duration)
+{:stop, :normal, state}
+end
+end
+```
+
+这个函数告诉工作进程休息一段时间然后正常退出。这是为了模拟短期工作进程。按照上述步骤重新启动会话。换句话说，签出三个工作进程：
+
+```elixir
+iex(1)> w1 = Pooly.checkout("Pool1")
+#PID<0.97.0>
+
+iex(2)> w2 = Pooly.checkout("Pool1")
+#PID<0.96.0>
+
+iex(3)> w3 = Pooly.checkout("Pool1")
+#PID<0.111.0>
+```
+
+这次，我们让第一个工作进程工作十秒。
+
+```elixir
+iex(4)> SampleWorker.work_for(w1, 10_000)
+:ok
+```
+
+现在尝试签出一个工作进程。由于我们已经超过了最大溢出量，池将导致客户端阻塞。
+
+```elixir
+iex(5)> Pooly.checkout("Pool1", true, :infinity)
+```
+
+十秒后，控制台输出了一个 pid：
+
+`#PID<0.114.0>`
+
+成功！尽管我们处于溢出状态，但一旦第一个工作进程完成了它的工作，另一个槽位变得可用，并交给了等待的客户端。
+
+## 7.3 习题
+
+1. *重启策略*。尝试不同的重启策略。例如，选择一个监督器并将其重启策略改为其他方式。启动 `:observer.start`，观察会发生什么。监督器是否按照你的预期重启了子进程/子进程们？
+
+2. *事务*。这个实现有一个局限性。它假设所有消费者都像池中的良好公民一样，在使用完工作者后将其检入。一般来说，池不应该做这样的假设，因为这样很容易导致工作者的饥饿。为了解决这个问题，Poolboy有*事务*。这里是框架代码：
+
+   ```elixir
+   defmodule Pooly.Server do
+
+   def transaction(pool_name, fun, timeout) do
+   worker = <填写此处>
+   try do
+   <填写此处>
+   after
+   <填写此处>
+   end
+   end
+   end
+   ```
+
+3. 目前可以多次检入同一个工作者。解决这个问题！
+
+## 7.4 总结
+
+不管你信不信，我们已经完成了 `Pooly`！如果你坚持到了这里，你应该好好享受一顿美餐。不仅如此，你还重新实现了 Poolboy 的 96.777%，但使用的是 Elixir。这可能是本章中最复杂、最大型的例子。但我相信，在完成这个例子后，你对监督器不仅有了更深的理解，还了解了它们如何与其他进程互动，以及如何以分层的方式构建监督器，以提供容错能力。
+
+如果你在第 6 章和第 7 章中遇到困难，不要担心[[2]](#uDaQkkzKLpF45pTTXpKN5X8)，这没有什么问题。我也在理解这些方面遇到了困难。`Pooly` 有很多复杂的部分。然而，如果你再次回顾代码，你会发现所有内容如何如此完美地结合在一起。在这一章中，我们：
+
+- 了解了如何使用 OTP Supervisor 行为
+- 构建了多个监督层次
+- 使用 OTP Supervisor API 动态创建监督器和工作者
+- 通过混合使用 Supervisors 和 GenServers，我们参观了构建非平凡应用的宏大之旅。
+
+在下一章中，我们将探讨同样令人兴奋的主题，分布式！
 
 
+[****[1]****](#uTtuo3MaRXcuCm9c6Xiu2jC) 或者更糟糕的是，自己构建一个（除非是出于教育目的）！
 
-7.3           Exercises
-
-
-1.   *Restart Strategies.* Play around with the different restart strategies. For example, pick one supervisor and its restart strategy to something different. Launch
-`:observer.start`
-and see what happens. Did the supervisor restart the child/children processes as you expected?
-
-
-2.   *Transactions*. There’s a limitation with this implementation. It is assumed that all consumers behave like good citizens of the pool and check back in the workers when they are done with it. In general, the pool shouldn’t make assumptions like this, since it is way too easy to cause a starvation of workers. In order to get around this, Poolboy has *transactions*. Here’s the skeleton:
-
-`defmodule Pooly.Server do`
-
-`def transaction(pool_name, fun, timeout) do`
-`worker = <FILL ME IN>`
-`try do`
-`<FILL ME IN>`
-`after`
-`<FILL ME IN>`
-`end`
-`end`
-`end`
-3.   Currently, it is possible to check-in the same worker *multiple* times. Fix this!
-
-
-7.4           Summary
-
-
-Believe it or not, we are done with
-`Pooly`! If you have made it this far, you deserve a nice meal. Not only that, you have re-implemented 96.777% of Poolboy, but in Elixir. This is probably the most complicated and largest example in this chapter. But I’m pretty sure after working through this example you would have gained a deeper appreciation of not only supervisors, but also how they interact with other processes and how supervisors can be structured in a layered way to provide fault tolerance.
-
-
-If you struggled with Chapter 6 and 7, don’t worry[[2]](#uDaQkkzKLpF45pTTXpKN5X8), there’s nothing wrong with you. I struggled with grasping this too. There were a lot of moving parts in
-`Pooly`. However if you step back and look at the code again, it’s pretty amazing how everything fits so well together. In this chapter, we:
-
-
-·      Understand how to use the OTP Supervisor behavior
-
-
-·      Build multiple supervision hierarchies
-
-
-·      Dynamically create supervisors and workers using the OTP Supervisor API
-
-
-·      Took a grand tour of building a non-trivial application using a mixture of Supervisors and GenServers.
-
-
-In the next chapter, we look at an equally exciting topic, distribution!
-
-
-
-
-
-[****[1]****](#uTtuo3MaRXcuCm9c6Xiu2jC) Or even worse, building one yourself (unless it’s for educational purposes)!
-
-
-
-
-[****[2]****](#uZv3OqK4r8HhoLncUO8eZeD) If you didn’t, I don’t want to hear about it.
-
-
-
+[****[2]****](#uZv3OqK4r8HhoLncUO8eZeD) 如果你没有，我不想听到这个。
 
 
