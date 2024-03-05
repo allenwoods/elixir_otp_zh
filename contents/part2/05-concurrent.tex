@@ -1,0 +1,1621 @@
+\chapter{并发错误处理和容错性：链接、监视器和进程}\label{chapt:concurrent}
+
+本章内容包括：
+
+\begin{itemize}
+
+\item  以 Elixir 风格处理错误
+\item  链接、监视器和捕获退出
+\item  实现一个监督器
+\end{itemize}
+
+是否看过阿诺德·施瓦辛格主演的《终结者》？那部关于未来的刺客机器人的电影？无论终结者受到多少枪击，它总能不屈不挠地一次又一次地复原。在本章结束时，你将熟悉容错性功能，能够构建能够优雅处理错误并采取纠正措施解决问题的程序。当然，你至少目前还无法构建天网。
+
+在顺序程序中，通常只有一个主进程在做所有繁重的工作。如果这个进程崩溃了怎么办？通常，这意味着整个程序都崩溃了。常见的处理方法是进行\emph{防御性编程}。这通常意味着在程序中加入\texttt{try}、 \texttt{catch} 和\texttt{if err != nil}。
+
+但在构建并发程序时，情况就不同了。由于有不止一个进程在运行，所以有可能\emph{另一个}进程\emph{检测到崩溃}并随后\emph{处理错误}。这是一个非常解放性的概念。
+
+你可能听说过或读过 Erlang 的非官方座右铭------``让它崩溃''------Erlang程序员非常喜欢这么说。因为这是 Erlang VM中处理事务的方式。事实证明，这么做有几个很好的理由，我们很快就会了解到。这种独特的错误处理方式可能会让习惯了防御性编程的程序员不由自主地抽搐。
+
+在本节中，我们将首先了解\emph{链接}、\emph{监视器}、\emph{捕获退出}和\emph{进程}，以及它们如何共同构成构建容错系统的基础构建块。然后我们将开始构建一个简单版本的监督器，其唯一的工作是管理工作进程。这将是进入下一章的完美过渡，在那里我们可以更充分地欣赏
+OTP 监督器行为所提供的便利和附加功能。
+
+\section{链接 ---直到死亡将我们分开}
+
+当一个进程链接到另一个进程时，它创建了一个双向关系。链接的进程有一个\emph{链接集}，其中包含它所链接的所有进程的集合。如果任一进程因任何原因终止，一个\emph{退出信号}会传播到所有与它链接的进程。此外，如果这些进程中的任何一个链接到不同的进程集，那么\emph{相同}的退出信号也会沿着传播。
+
+\begin{figure}[!ht]
+    \centering
+    \includegraphics[width=0.8\linewidth]{5_1.png}
+    \caption{当一个进程死亡时，所有链接到它的其他进程也将死亡（假设它们没有捕获退出）}
+    \label{fig:5_1}
+\end{figure}
+
+
+如果你现在在挠头并想知道为什么这是件好事，请考虑以下示例，一群进程在进行map-reduce作业。如果这些进程中的任何一个崩溃并死亡，让其余进程继续工作就没有意义了。事实上，让进程相互链接将简化剩余进程的清理工作，因为其中一个进程的失败会自动导致其余链接的进程崩溃。
+
+
+\subsection{将进程链接在一起}
+
+为了理解这一点，需要一个示例。使用\texttt{Process.link/1}创建链接，唯一的参数是要\emph{链接到}的进程的进程 ID。这意味着\texttt{Process.link/1} 必须在现有进程中调用。
+
+\texttt{Process.link/1} 和\texttt{Process.monitor/1} 都是在进程的上下文中调用的
+
+注意 \texttt{Process.link/1}必须在现有的进程中调用，因为没有\texttt{Process.link(link\_from, link\_to)}这样的东西。\texttt{Process.monitor/1} 也是如此。
+
+打开一个 \texttt{iex} 会话。我们将创建一个与\texttt{iex} shell 进程链接的进程。由于我们处于 shell进程的上下文中，所以每当我们调用\texttt{Process.link/1} 时，我们都将 shell进程链接到我们指向的任何进程。
+
+我们要创建的进程将在接收到 \texttt{:crash}消息时崩溃。观察它崩溃时会发生什么。首先，让我们记录下当前 shell 进程的pid：
+
+\begin{code}{}\begin{minted}[linenos]{elixir}
+iex > self
+# PID<0.119.0>
+\end{minted}
+% \caption{Listing Caption}
+% \label{lst:id}
+\end{code}
+
+我们可以检查当前 shell 进程的链接集：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex > Process.info(self, :links)
+{:links, []}
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+\texttt{Process.info/1}包含有关进程的许多其他有用信息。我们使用\texttt{Process.info(self, :links)}是因为我们现在只对链接集感兴趣。其他有趣的信息包括邮箱中的消息总数、堆大小以及进程启动时的参数。
+
+正如预期的那样，它是空的，因为我们还没有链接任何进程。接下来，让我们创建一个只对\texttt{:crash} 消息作出响应的进程：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex > pid =
+  spawn(fn ->
+    receive do
+      :crash -> 1 / 0
+    end
+  end)
+
+# PID<0.133.0>
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+现在，我们将 shell 进程链接到我们刚刚创建的进程：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex > Process.link(pid)
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+\texttt{<0.133.0>} 现在在\texttt{self} 的链接集中：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex> Process.info(self, :links)
+{:links, [#PID<0.133.0>]}
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+反过来，\texttt{self}(\texttt{<0.119.0>}) 也在\texttt{<0.133.0>} 的链接集中：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex> Process.info(pid, :links)
+{:links, [#PID<0.119.0>]}
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+现在应该很清楚了，从 shell 进程中调用\texttt{Process.link/1} 创建了一个双向链接，将 shell进程和我们刚刚产生的进程链接在一起。
+
+现在，我们一直在等待的时刻到了------让我们结束这个进程，看看会发生什么：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex > send(pid, :crash)
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+11:39:40.961 [error] Error in process <0.133.0> with exit value: {badarith,[{erlang,'/',[1,0],[]}]}
+ 
+** (EXIT from #PID<0.119.0>) an exception was raised:
+** (ArithmeticError) bad argument in arithmetic expression: erlang./(1, 0)
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+错误消息告诉我们，我们在 \texttt{<0.133.0>}中执行了一些糟糕的数学计算，导致了\texttt{ArithmeticError}。此外，请注意，\emph{相同}的错误也使
+shell 进程 \texttt{<0.119.0>}崩溃。为了让我们确信之前的 shell 进程确实已经消失：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex > self
+# PID<0.145.0>
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+\texttt{self} 的 pid 不再是\texttt{<0.119.0>}。
+
+ \subsection{连锁反应的退出信号}
+
+在前一个例子中，我们建立了两个进程之间的链接。在这个例子中，我们将创建一个链接进程的环，以便你亲自看到错误是如何被传播并重新传播到所有链接中的。在终端中，创建一个新项目：
+
+\mintinline{elixir}|% mix new ring|
+
+打开 \texttt{lib/ring.ex}，并添加以下内容：
+
+\begin{code}{\texttt{ring.ex} 创建链接进程组成的环}
+\begin{minted}[linenos]{elixir}
+defmodule Ring do
+  def create_processes(n) do
+    1..n |> Enum.map(fn _ -> spawn(fn -> loop end) end)
+  end
+
+  def loop do
+    receive do
+      {:link, link_to} when is_pid(link_to) ->
+        Process.link(link_to)
+        loop
+
+      :crash ->
+        1 / 0
+    end
+  end
+end
+\end{minted}
+\label{lst:create_processes_ring}  
+\end{code}
+
+上述内容应该很直接。\texttt{Ring.create\_processes/1}创建 \texttt{n} 个进程，每个进程都运行之前定义的\texttt{loop}函数。\texttt{Ring.create\_processes/1}的返回值是一个生成的 pids 列表。
+
+循环函数定义了进程可以接收的两种类型的消息，这些消息是：
+
+\begin{itemize}
+\item  \mintinline{elixir}|{:link, link_to}| - 链接到由  \texttt{link\_to} 指定的进程。
+\item  \texttt{:crash} - 故意崩溃进程。
+\end{itemize}
+
+\subsection{设置环}
+
+设置链接环更有趣。特别注意我们如何使用模式匹配和递归来设置环：
+
+\begin{code}{}  \captionof{listing}{\texttt{ring.ex} 使用递归设置链接环}
+\begin{minted}[linenos]{elixir}
+defmodule Ring do
+  # ...
+
+  def link_processes(procs) do
+    link_processes(procs, [])
+  end
+
+  def link_processes([proc_1, proc_2 | rest], linked_processes) do
+    send(proc_1, {:link, proc_2})
+    link_processes([proc_2 | rest], [proc_1 | linked_processes])
+  end
+
+  def link_processes([proc | []], linked_processes) do
+    first_process = linked_processes |> List.last()
+    send(proc, {:link, first_process})
+    :ok
+  end
+
+  # ...
+end
+\end{minted}
+% \label{lst:use_recursion_to_set_up_linked_ring}
+\end{code}
+
+第一个函数子句 \texttt{link\_processes/1} 是\texttt{link\_processes/2}的入口点。\texttt{link\_processes/2}函数将第二个参数初始化为空列表。\texttt{link\_processes/2}的第一个参数是一系列进程（最初未链接）：
+
+\begin{code}{ring.ex - 使用模式匹配链接前两个进程}
+\begin{minted}[linenos]{elixir}
+def link_processes([proc_1, proc_2 | rest], linked_processes) do
+  send(proc_1, {:link, proc_2})
+  link_processes([proc_2 | rest], [proc_1 | linked_processes])
+end
+\end{minted}
+\label{lst:use_pattern_matching_to_link_first_two_processes}
+\end{code}
+
+我们可以使用模式匹配来获取列表中的前两个进程。然后，通过发送\mintinline{elixir}|{:link, link_to}|消息，告诉第一个进程链接到第二个进程。
+
+接下来，递归调用\texttt{link\_processes/2}。这次，输入进程\emph{不包括}第一个进程。相反，它被添加到第二个参数中，表示已向该进程发送
+\mintinline{elixir}|{:link, link_to}| 消息。
+
+不久，输入进程列表中将只剩下一个进程。这并不难看出。那是因为我们每次递归调用\texttt{link\_processes/2}，输入列表的大小就减少一个。我们可以通过模式匹配\texttt{[proc|[]]} 来检测这种情况：
+
+\begin{code}{ring.ex - 只剩下一个进程时的终止条件}
+\begin{minted}[linenos]{elixir}
+def link_processes([proc | []], linked_processes) do
+  first_process = linked_processes |> List.last()
+  send(proc, {:link, first_process})
+  :ok
+end
+\end{minted}
+\label{lst:termination_condition_when_only_one_process_is_left}
+\end{code}
+
+最后，为了完成环，我们需要将 \texttt{proc}链接到第一个进程。因为进程按照 LIFO（后进先出）的顺序被添加到\texttt{linked\_processes}列表中，这意味着第一个进程是最后一个元素。一旦我们从最后一个进程创建了到第一个进程的链接，我们就完成了环。让我们试一试吧：
+
+\texttt{\% iex -S mix}
+
+让我们创建五个进程：
+\begin{minted}[linenos]{elixir}
+iex(1)> pids = Ring.create_processes(5)
+[#PID<0.84.0>, #PID<0.85.0>, #PID<0.86.0>, #PID<0.87.0>, #PID<0.88.0>]
+\end{minted}
+
+接下来，我们将它们全部链接起来：
+\begin{minted}[linenos]{elixir}
+iex(2) > Ring.link_processes(pids)
+:ok
+\end{minted}
+
+这些进程的链接集是什么？让我们找出来：
+
+\mintinline{elixir}|iex > pids |> Enum.map(fn pid -> "\#\{inspect pid\}: \#\{inspect Process.info(pid, :links)\}" end)|
+
+这给了我们：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+[
+  "#PID<0.84.0>: {:links, [#PID<0.85.0>, #PID<0.88.0>]}",
+  "#PID<0.85.0>: {:links, [#PID<0.84.0>, #PID<0.86.0>]}",
+  "#PID<0.86.0>: {:links, [#PID<0.85.0>, #PID<0.87.0>]}",
+  "#PID<0.87.0>: {:links, [#PID<0.86.0>, #PID<0.88.0>]}",
+  "#PID<0.88.0>: {:links, [#PID<0.87.0>, #PID<0.84.0>]}"
+]
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+\begin{figure}[!ht]
+    \centering
+    \includegraphics[width=0.8\linewidth]{5_2.png}
+    \caption{链接进程的环。注意每个进程在其链接集中有两个其他进程}
+    \label{fig:5_2}
+\end{figure}
+
+让我们崩溃一个随机进程！我们从 \texttt{pids}列表中随机选择一个 pid 并向它发送 \texttt{:crash}消息：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex(6) > pids |> Enum.shuffle() |> List.first() |> send(:crash)
+:crash
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+现在我们可以检查这些进程是否都没有幸存：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex(8) > pids |> Enum.map(fn pid -> Process.alive?(pid) end)
+[false, false, false, false, false]
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+\subsection{截获退出信号}
+
+到目前为止，我们所做的只是看到链接将所有链接的进程一起带下来。如果我们不希望进程在接收到错误信号时死亡怎么办？我们需要使进程\emph{截获退出信号}。
+要使进程截获退出信号，需要调用\texttt{Process.flag(:trap\_exit, true)}。这样做将进程从普通进程转变为系统进程。
+
+普通进程与系统进程有何区别？当系统进程收到错误信号时，它不会像普通进程那样崩溃，而是将信号转换为普通消息，
+格式为\mintinline{elixir}|{:EXIT, pid, reason}|，其中\texttt{pid}是被终止的进程，\texttt{reason}是终止的原因。
+
+这样，系统进程可以对被终止的进程采取纠正措施。让我们看看这是如何与两个进程一起工作的，类似于本节中的第一个示例。
+
+首先，我们注意到当前的shell进程：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex > self
+# PID<0.58.0>
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+接下来，通过使其截获退出来将shell进程转变为系统进程：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex > Process.flag(:trap_exit, true)
+false
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+请注意，就像\texttt{Process.link/1}一样，这必须在调用进程内部调用。然后，我们创建一个将要崩溃的进程：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex > pid =
+  spawn(fn ->
+    receive do
+      :crash -> 1 / 0
+    end
+  end)
+
+# PID<0.62.0>
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+然后将新创建的进程链接到shell进程：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex > Process.link(pid)
+true
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+现在，如果我们尝试崩溃新创建的进程会发生什么？
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex> send(pid, :crash)
+:crash
+14:37:10.995 [error] Error in process <0.62.0> with exit value: {badarith,[{erlang,’/‘,[1,0],[]}]}
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+首先，让我们检查shell进程是否存活：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex > self
+# PID<0.58.0>
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+是的！它与之前的进程相同。现在，让我们看看shell进程收到了什么消息：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex> flush
+{:EXIT, #PID<0.62.0>, {:badarith, [{:erlang, :/, [1, 0], []}]}}
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+正如预期的，因为shell进程以\mintinline{elixir}|{:EXIT, pid, reason}|的形式接收到消息。我们稍后在学习如何创建我们自己的监督者进程时会利用这一点。
+
+\subsection{链接已终止/不存在的进程}
+
+让我们尝试链接一个已死的进程，看看会发生什么。首先，我们创建一个很快就退出的进程：
+
+\begin{code}{}\begin{minted}[linenos]{elixir}
+iex> pid = spawn(fn -> IO.puts "Bye, cruel world." end)
+Bye, cruel world.
+#PID<0.80.0>
+\end{minted}
+% \caption{Listing Caption}
+% \label{lst:id}
+\end{code}
+
+我们确保这个进程真的死了：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex > Process.alive?(pid)
+false
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+然后我们尝试链接一个已死的进程：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex> Process.link(pid)
+** (ErlangError) erlang error: :noproc:erlang.link(#PID<0.62.0>)
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+\texttt{Process.link/1}确保你正在链接到一个未终止的进程，并且如果你尝试链接到一个已终止或不存在的进程，它会报错。
+
+\subsection{\texttt{spawn\_link/3}：在一个原子步骤中产生和链接}
+
+大多数时候，当生成一个进程时，你会想使用\texttt{spawn\_link/3}。
+但它是否只是\texttt{spawn/3}和\texttt{link/1}的简单封装？
+换句话说，执行\mintinline{elixir}|spawn_link(Worker, :loop, [])|是否与执行以下操作相同：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+pid = spawn(Worker, :loop, [])
+Process.link(pid)
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+事实证明，这个故事比这更复杂。\texttt{spawn\_link/3}在一个原子操作中完成生成和链接。为什么这很重要？这是因为当\texttt{link/1}给出一个已终止或不存在的进程时，它会抛出一个错误。由于\texttt{spawn/3}和\texttt{link/1}是两个单独的步骤，\texttt{spawn/3}很可能失败，导致后续调用\texttt{link/1}引发异常。
+
+\subsection{退出消息}
+
+有三种类型的\texttt{:EXIT}消息。你已经看到了第一种，其中返回的终止原因描述了异常。
+
+\subsubsection{正常终止}
+
+进程在正常终止时发送\texttt{:EXIT}消息。这意味着进程没有更多的代码要运行。例如，给出这个进程，其唯一的任务是接收\texttt{:ok}消息然后退出：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex > pid =
+  spawn(fn ->
+    receive do
+      :ok -> :ok
+    end
+  end)
+
+# PID<0.73.0>
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+记得链接这个进程：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex > Process.link(pid)
+true
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+然后我们发送\texttt{:ok}消息给这个进程，使其正常退出：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex > send(pid, :ok)
+:ok
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+现在，让我们揭示shell进程收到的消息：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex> flush
+{:EXIT, #PID<0.73.0>, :normal}
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+请注意，对于\emph{正常}链接到刚刚正常退出（即以\texttt{:normal}为原因）的进程的进程，前者进程\emph{不会}被终止。
+
+\subsubsection{强制杀死进程}
+
+进程死亡还有一种方式，那就是使用\texttt{Process.exit(pid, :kill)}。这会向目标进程发送一个\emph{无法截获}的退出信号。这意味着即使进程可能正在截获退出，这也是它无法截获的一个信号。让我们设置shell进程来截获退出：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex > self
+# PID<0.91.0>
+
+iex > Process.flag(:trap_exit, true)
+false
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+当我们尝试使用\texttt{:kill}以外的原因使用\texttt{Process.exit/2}杀死它时：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex> Process.exit(self, :whoops)
+true
+
+iex> self
+#PID<0.91.0>
+
+iex> flush
+{:EXIT, #PID<0.91.0>, :whoops}
+
+iex> self
+#PID<0.91.0>
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+在这里，我们已经显示了shell进程已成功截获该信号，因为它在其邮箱中收到了\mintinline{elixir}|{:EXIT, pid, reason}|消息。
+
+现在，让我们尝试\texttt{Process.exit(self, :kill)}：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex> Process.exit(self, :kill)
+** (EXIT from #PID<0.91.0>) killed
+
+iex> self
+#PID<0.103.0>
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+这次，请注意shell进程重新启动，进程id不再是我们之前的那个。
+
+\subsection{重新设计环形链}
+
+再次考虑环形链。只有两个进程设置了退出陷阱。我们想创建的是这样的：
+
+\begin{figure}[!ht]
+    \centering
+    \includegraphics[width=0.8\linewidth]{5_3.png}
+    \caption{当进程 2 被终止时会发生什么？}
+    \label{fig:5_3}
+\end{figure}
+
+再次打开\texttt{lib/ring.ex}，添加消息来让进程设置退出陷阱并处理
+\mintinline{elixir}|{:EXIT, pid, reason}|：
+
+\begin{code}{ring.ex - 让进程处理 :EXIT 和 :DOWN 消息}
+\begin{minted}[linenos]{elixir}
+defmodule Ring do
+  # …
+
+  def loop do
+    receive do
+      {:link, link_to} when is_pid(link_to) ->
+        Process.link(link_to)
+        loop
+
+      :trap_exit ->
+        # 1 处理设置退出陷阱的消息
+        Process.flag(:trap_exit, true)
+        loop
+
+      :crash ->
+        1 / 0
+
+      # 2 处理检测 :DOWN 消息
+      {:EXIT, pid, reason} ->
+        IO.puts("#{inspect(self)} received {:EXIT, #{inspect(pid)}, #{reason}}")
+        loop
+    end
+  end
+end
+\end{minted}
+\label{lst:trap_exit_and_handle_exit_messages}
+\end{code}
+
+进程 1 和进程 2 设置了退出陷阱。所有进程彼此链接。现在，当 2 被终止时会发生什么？我们可以创建三个进程来找出答案：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex> [p1, p2, p3] = Ring.create_processes(3)
+[#PID<0.97.0>, #PID<0.98.0>, #PID<0.99.0>]
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+并将它们链接起来：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex > [p1, p2, p3] |> Ring.link_processes()
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+我们设置前两个进程来设置退出陷阱。
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex > send(p1, :trap_exit)
+iex > send(p2, :trap_exit)
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+观察我们终止 \texttt{p2} 时会发生什么：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex > Process.exit(p2, :kill)
+
+# PID<0.97.0> received {:EXIT, #PID<0.98.0>, killed}#PID<0.97.0> received {:EXIT, #PID<0.99.0>, killed}
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+最后检查，只有 \texttt{p1} 存活：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex > [p1, p2, p3] |> Enum.map(fn p -> Process.alive?(p) end)
+[true, false, false]
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+这里是教训：
+
+如果一个进程设置了退出陷阱，并且它被使用\texttt{Process.exit(pid, :kill)}目标终止，它还是会被终止。
+当它死亡时，它会向它的链接集中的进程传播一个\mintinline{elixir}|{:EXIT, \#PID<0.98.0>, :killed}|消息，这\emph{可以}被陷阱捕获。
+
+下面是一个表格，总结所有不同的情况：
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.3974}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.1795}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.4231}}@{}}
+\toprule()
+\begin{minipage}[b]{\linewidth}\raggedright
+当链接集中的进程\ldots{}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+设置退出陷阱？
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+那么会发生什么？
+\end{minipage} \\
+\midrule()
+\endhead
+正常退出 & 是 & 接收
+\mintinline{elixir}|{:EXIT, pid, :normal}| \\
+& 否 & 无任何反应 \\
+使用 \texttt{Process.exit(pid, :kill)} & 是 & 接收
+\mintinline{elixir}|{:EXIT, pid, :normal}| \\
+终止 & 否 & 以 \texttt{:killed} 终止 \\
+使用 \texttt{Process.exit(pid, other)} & 是 & 接收
+\mintinline{elixir}|{:EXIT, pid, other }| \\
+终止 & 否 & 以 \texttt{other} 终止 \\
+\bottomrule()
+\caption{链接集中的进程退出时可能发生的不同情况}
+\label{table:5_1}
+\end{longtable}
+
+\section{监视器}
+
+有时候，您不需要双向链接。您只是想让一个进程知道另一个进程是否已经宕机，而不影响监视进程本身。
+例如，在客户端-服务器架构中，如果客户端由于某种原因宕机，服务器不应该随之宕机。
+
+这就是\emph{监视器}的用途。它们在监视进程和被监视的进程之间建立单向链接。让我们来做一些监视工作！我们创建一个我们最喜欢的可崩溃进程：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex > pid =
+  spawn(fn ->
+    receive do
+      :crash -> 1 / 0
+    end
+  end)
+
+# PID<0.60.0>
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+然后，我们告诉shell去监视这个进程：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex > Process.monitor(pid)
+# Reference<0.0.0.80>
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+注意返回值是一个对监视器的\emph{引用}。
+
+引用是独一无二的，可以用来识别消息的来源，尽管这是后面章节的主题。
+
+现在，让进程崩溃并看看会发生什么：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex> send(pid, :crash)
+:crash
+
+iex>
+18:55:20.381 [error] Error in process <0.60.0> with exit value: {badarith,[{erlang,’/‘,[1,0],[]}]}`nil
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+让我们检查shell进程的邮箱：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex> flush
+{:DOWN, #Reference<0.0.0.80>, :process, #PID<0.60.0>,{:badarith, [{:erlang, :/, [1, 0], []}]}}
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+注意引用与\texttt{Process.monitor/1}返回的引用相匹配。
+
+\subsection{监视已终止/不存在的进程}
+
+当您尝试监视一个已终止/不存在的进程时会发生什么？继续我们之前的例子，我们首先确信\texttt{pid}确实已经死亡：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex > Process.alive?(pid)
+false
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+然后让我们再次尝试监视：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex(11) > Process.monitor(pid)
+# Reference<0.0.0.114>
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+\texttt{Process.monitor/1}正常处理，不像\texttt{Process.link/1}，它会抛出一个\texttt{:noproc}错误。shell进程收到什么消息？
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex(12)> flush
+{:DOWN, #Reference<0.0.0.114>, :process, #PID<0.60.0>, :noproc}
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+我们得到一个看起来类似的\texttt{:noproc}消息，不过它不是错误，而是一个平常的消息存在于邮箱中。因此，这个消息可以从邮箱中通过模式匹配得到。
+
+\section{实现一个监督器}
+
+一个监督器是一个负责监视一个或多个进程的进程。被监视的进程可以是工作进程（Worker），甚至是其他监督器。
+
+\begin{figure}[!ht]
+    \centering
+    \includegraphics[width=0.8\linewidth]{5_4.png}
+    \caption{一个监督树可以与其他监督树层叠。监督器和工作进程都可以被监督}
+    \label{fig:5_4}
+\end{figure}
+
+
+监督器和工作进程被安排在一个监督树中。如果任何工作进程死亡，监督器可以重启死掉的工作进程，并且可能根据特定的\emph{重启策略}重启监督树中的其他工作进程。什么是工作进程？它们通常是实现了GenServer,GenFSM或GenEvent行为的进程。
+
+到目前为止，您已经拥有了构建自己的监督器所需的所有构件。一旦您完成了这个部分，监督器将不再显得神奇，尽管这并不意味着它们不再令人敬畏。
+
+\subsection{监督器API}
+
+下表列出了监督器的API以及简要描述：
+
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 2\tabcolsep) * \real{0.5000}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 2\tabcolsep) * \real{0.5000}}@{}}
+\toprule()
+\begin{minipage}[b]{\linewidth}\raggedright
+API
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+描述
+\end{minipage} \\
+\midrule()
+\endhead
+\texttt{start\_link(child\_spec\_list)} &
+给定一个可能为空的子进程规范列表，启动监督器进程和相应的子进程 \\
+\texttt{start\_child(supervisor, child\_spec)} &
+给定一个监督器pid和一个子进程规范，启动子进程并将其链接到监督器 \\
+\texttt{terminate\_child(supervisor, pid)} &
+给定一个监督器pid和一个子pid，终止子进程 \\
+\texttt{restart\_child(supervisor, pid, child\_spec)} &
+给定一个监督器pid、子pid和一个子进程规范，重启子进程并用子进程规范初始化子进程 \\
+\texttt{count\_children(supervisor)} &
+给定监督器pid，返回子进程的数量 \\
+\texttt{which\_children(supervisor)} &
+给定监督器pid，返回监督器的状态 \\
+\bottomrule()
+\caption{我们将实现的API总结}
+\label{table:5_2}
+\end{longtable}
+
+实现上述API将使我们对实际OTP监督器在底层如何工作有一个非常好的理解。
+
+\subsection{构建我们自己的监督器}
+
+像往常一样，我们从一个新的\texttt{mix}项目开始。由于叫它\texttt{Supervisor}不够原创，而\texttt{MySupervisor}又太无聊，让我们给它一些古英语的风格，称之为\texttt{ThySupervisor}：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+% mix new thy_supervisor
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+作为一种复习，我们将使用GenServer行为构建我们的监督器。您可能会惊讶地发现，监督器行为实际上实现了GenServer行为。
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+defmodule ThySupervisor do
+  use GenServer
+end
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+\subsection{\texttt{start\_link(child\_spec\_list)}}
+
+首先实现 \texttt{start\_link/1}。
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+defmodule ThySupervisor do
+  use GenServer
+
+  def start_link(child_spec_list) do
+    GenServer.start_link(__MODULE__, [child_spec_list])
+  end
+end
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+这是创建监督进程的主要入口点。在这里，我们调用\texttt{GenServer.start\_link/2}，传入模块的名称和包含\texttt{child\_spec\_list}的列表。
+\texttt{child\_spec\_list}指定了（可能为空的）\emph{子进程规范}列表。
+
+这是一种告诉监督者它应该管理哪些\emph{类型}的进程的方式。
+两个（相似）工作进程的子进程规范可能看起来像这样：\texttt{[\{ThyWorker, :start\_link, []\}, \{ThyWorker, :start\_link, []\}]}。
+
+回想一下，\texttt{GenServer.start\_link/2} 期望实现\texttt{ThySupervisor.init/1}回调。
+它将第二个参数（列表）传递给\texttt{:init/1}。让我们来做：
+
+
+\begin{code}{\texttt{thy\_supervisor.ex} - \texttt{start\_link/1} 和 \texttt{init callback/1}。注意，在\texttt{init/1 callback}中捕获了退出}
+\begin{minted}[linenos]{elixir}
+defmodule ThySupervisor do
+  use GenServer
+
+  #######
+  # API #
+  #######
+
+  def start_link(child_spec_list) do
+    GenServer.start_link(__MODULE__, [child_spec_list])
+  end
+
+  ######################
+  # 回调函数 #
+  ######################
+
+  def init([child_spec_list]) do
+    Process.flag(:trap_exit, true)                      #1
+    state = child_spec_list
+    |> start_children
+    |> Enum.into(HashDict.new)
+
+    {:ok, state}
+  end
+end
+
+#1 让监督进程捕获退出
+\end{minted}
+\label{lst:start_link_and_init_callback}
+\end{code}
+
+
+我们在这里做的第一件事就是让监督进程捕获退出。这样，它就可以接收来自其子进程的退出信号作为正常消息。
+
+接下来的几行中有很多事情发生。\texttt{child\_spec\_list}被输入到\texttt{start\_children/1}。
+很快您将看到，此函数生成子进程并返回一个元组列表。每个元组都是一对，包含新生成子进程的pid 和子进程规范。例如：
+
+\texttt{[\{<0.82.0>, \{ThyWorker, :init, []\}\}, \{<0.84.0>, \{ThyWorker, :init, []\}\}]}
+
+然后这个列表被输入到 \texttt{Enum.into/2}。通过将\texttt{HashDict.new}作为第二个参数传递，我们实际上将元组列表转换为\texttt{HashDict}，子进程的 pid 作为键，子进程规范作为值。
+
+\subsubsection{使用 \texttt{Enum.into} 将可枚举类转换为可收集类}
+
+\texttt{Enum.into/2}（和接受额外转换函数的\texttt{Enum.into/3}）将一个可枚举（如\texttt{List}）插入到一个可收集的对象中（如\texttt{HashDict}）。这很有帮助，因为 HashDict知道如果它得到一个元组，第一个元素将成为键，第二个元素将成为值：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex > h =
+  [{:pid1, {:mod1, :fun1, :arg1}}, {:pid2, {:mod2, :fun2, :arg2}}] |> Enum.into(HashDict.new())
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+这将返回一个 HashDict：
+
+\texttt{\#HashDict<[pid2: \{:mod2, :fun2, :arg2\}, pid1: \{:mod1, :fun1, :arg1\}]>}
+
+可以这样检索键：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex > HashDict.fetch(h, :pid2)
+{:ok, {:mod2, :fun2, :arg2}}
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+生成的 \texttt{HashDict} 包含 pid和子进程规范映射，构成了监督进程的\emph{状态}，我们以\mintinline{elixir}|{:ok, state}| 元组返回，这是\texttt{init/1} 所期望的。
+
+\subsubsection{\texttt{start\_child(supervisor, child\_spec)}}
+
+我还没有描述在 \texttt{init/1} 中使用的私有函数\texttt{start\_children/1}中发生的事情。让我们稍微跳过一点，先看看\texttt{start\_child/2}。这个函数接收监督者 pid和子进程规范，并将子进程附加到监督者：
+
+\begin{code}{thy\_supervisor.ex - 启动单个子进程}
+\begin{minted}[linenos]{elixir}
+defmodule ThySupervisor do
+  use GenServer
+
+  #######
+  # API #
+  #######
+
+  def start_child(supervisor, child_spec) do
+    GenServer.call(supervisor, {:start_child, child_spec})
+  end
+
+  ######################
+  # 回调函数 #
+  ######################
+
+  def handle_call({:start_child, child_spec}, _from, state) do
+    case start_child(child_spec) do
+      {:ok, pid} ->
+        new_state = state |> HashDict.put(pid, child_spec)
+        {:reply, {:ok, pid}, new_state}
+
+      :error ->
+        {:reply, {:error, "error starting child"}, state}
+    end
+  end
+
+  #####################
+  # 私有函数 #
+  #####################
+
+  defp start_child({mod, fun, args}) do
+    case apply(mod, fun, args) do
+      pid when is_pid(pid) ->
+        Process.link(pid)
+        {:ok, pid}
+
+      _ ->
+        :error
+    end
+  end
+end
+\end{minted}
+\label{lst:start_single_child}
+\end{code}
+
+\texttt{start\_child/2} API调用向监督者发出同步调用请求。请求包含一个包含\texttt{:start\_child} 原子和子进程规范的元组。
+请求由\texttt{handle\_call(\{:start\_child, child\_spec\}, \_, \_)}回调处理。
+它尝试使用 \texttt{start\_child/1}私有函数启动一个新的子进程。
+
+成功后，调用进程接收到\mintinline{elixir}|{:ok, pid}|，监督者的状态更新为\texttt{new\_state}。
+否则，调用进程接收到带有\texttt{:error} 标签的元组，并提供原因。
+
+\subsubsection{监督者和使用 spawn\_link 生成子进程}
+
+这里有一个重要的点，我们在这里做了一个很大的假设。假设是我们假设创建的进程链接到监督进程。这意味着什么？这意味着我们假设进程是使用
+\texttt{spawn\_link} 生成的。事实上，在 OTP监督者行为中假设进程是使用 \texttt{spawn\_link}创建的。
+
+\subsubsection{启动子进程}
+
+现在，我们可以看看 \texttt{start\_children/1}函数，它在 \texttt{init/1} 中使用：
+
+\begin{code}{thy\_supervisor.ex - 启动子进程}
+\begin{minted}[linenos]{elixir}
+defmodule ThySupervisor do
+  # …
+
+  #####################
+  # 私有函数 #
+  #####################
+
+  defp start_children([child_spec | rest]) do
+    case start_child(child_spec) do
+      {:ok, pid} ->
+        [{pid, child_spec} | start_children(rest)]
+
+      :error ->
+        :error
+    end
+  end
+
+  defp start_children([]), do: []
+end
+\end{minted}
+\label{lst:start_child}
+\end{code}
+
+\texttt{start\_children/1}函数接收子进程规范列表，并将子进程规范交给\texttt{start\_child/1}，同时累积一个元组列表。
+如前所述，每个元组都是一对，包含\texttt{pid} 和子进程规范。
+
+\texttt{start\_child/1}是如何工作的？事实证明，没有太多复杂的机制涉及。
+每当我们看到一个\texttt{pid}，我们会将其链接到监督进程：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+defp start_child({mod, fun, args}) do
+  case apply(mod, fun, args) do
+    pid when is_pid(pid) ->
+      Process.link(pid)
+      {:ok, pid}
+
+    _ ->
+      :error
+  end
+end
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+\subsubsection{\texttt{terminate\_child(supervisor, pid)}}
+
+监督器需要一种方法来终止其子进程。以下是API，回调和私有函数的实现：
+
+
+\begin{code}{ thy\_supervisor.ex -- 终止单个子进程}
+\begin{minted}[linenos]{elixir}
+defmodule ThySupervisor do
+  use GenServer
+
+  #######
+  # API #
+  #######
+
+  def terminate_child(supervisor, pid) when is_pid(pid) do
+    GenServer.call(supervisor, {:terminate_child, pid})
+  end
+
+  ######################
+  # Callback Functions #
+  ######################
+
+  def handle_call({:terminate_child, pid}, _from, state) do
+    case terminate_child(pid) do
+      :ok ->
+        new_state = state |> HashDict.delete(pid)
+        {:reply, :ok, new_state}
+
+      :error ->
+        {:reply, {:error, "error terminating child"}, state}
+    end
+  end
+
+  #####################
+  # Private Functions #
+  #####################
+
+  defp terminate_child(pid) do
+    Process.exit(pid, :kill)
+    :ok
+  end
+end
+\end{minted}
+\label{lst:stop_single_child}
+\end{code}
+
+我们使用 \texttt{Process.exit(pid, :kill)}来终止子进程。
+还记得我们如何设置监督器来捕获退出吗？当一个子进程被强制杀死使用\texttt{Process.exit(pid, :kill)}，监督器将收到一个形式为\mintinline{elixir}|{:EXIT, pid, :killed}|的消息。为了处理这个消息，使用 \texttt{handle\_info/3}回调：
+
+\begin{code}{thy\_supervisor.ex -- :EXIT 消息通过 handle\_info/3 回调处理}
+\begin{minted}[linenos]{elixir}
+def handle_info({:EXIT, from, :killed}, state) do
+  new_state = state |> HashDict.delete(from)
+  {:no_reply, new_state}
+end
+\end{minted}
+\label{lst:handle_exit_message}
+\end{code}
+
+我们需要做的就是更新监督器状态，通过在\texttt{HashDict}中删除其条目，并在回调中返回适当的元组。
+
+\subsubsection{\texttt{restart\_child(pid, child\_spec)}}
+
+有时手动重启一个子进程是有帮助的。当我们想要重启一个子进程时，我们需要提供进程id和子进程规范。
+为什么我们需要将子进程规范与进程id一起传入？原因是你可能想要添加更多的参数，这必须进入子进程规范。
+
+\texttt{restart\_child/2} 私有函数是\texttt{terminate\_child/1} 和\texttt{start\_child/1} 的组合。
+
+\begin{code}{thy\_supervisor.ex -- 重启一个子进程}
+\begin{minted}[linenos]{elixir}
+defmodule ThySupervisor do
+  use GenServer
+
+  #######
+  # API #
+  #######
+
+  def restart_child(supervisor, pid, child_spec) when is_pid(pid) do
+    GenServer.call(supervisor, {:restart_child, pid, child_spec})
+  end
+
+  ######################
+  # Callback Functions #
+  ######################
+
+  def handle_call({:restart_child, old_pid}, _from, state) do
+    case HashDict.fetch(state, old_pid) do
+      {:ok, child_spec} ->
+        case restart_child(old_pid, child_spec) do
+          {:ok, {pid, child_spec}} ->
+            new_state =
+              state
+              |> HashDict.delete(old_pid)
+              |> HashDict.put(pid, child_spec)
+
+            {:reply, {:ok, pid}, new_state}
+
+          :error ->
+            {:reply, {:error, "error restarting child"}, state}
+        end
+
+      _ ->
+        {:reply, :ok, state}
+    end
+  end
+
+  #####################
+  # Private Functions #
+  #####################
+
+  defp restart_child(pid, child_spec) when is_pid(pid) do
+    case terminate_child(pid) do
+      :ok ->
+        case start_child(child_spec) do
+          {:ok, new_pid} ->
+            {:ok, {new_pid, child_spec}}
+
+          :error ->
+            :error
+        end
+
+      :error ->
+        :error
+    end
+  end
+end
+\end{minted}
+\label{lst:restart_single_child}
+\end{code}
+
+\subsubsection{\texttt{count\_children(supervisor)}}
+
+这个函数返回与监督器链接的子进程的数量。实现很直接：
+
+\begin{code}{thy\_supervisor.ex -- 计算子进程的数量}
+\begin{minted}[linenos]{elixir}
+defmodule ThySupervisor do
+  use GenServer
+
+  #######
+  # API #
+  #######
+
+  def count_children(supervisor) do
+    GenServer.call(supervisor, :count_children)
+  end
+
+  ######################
+  # Callback Functions #
+  ######################
+
+  def handle_call(:count_children, _from, state) do
+    {:reply, HashDict.size(state), state}
+  end
+end
+\end{minted}
+\label{lst:count_children}
+\end{code}
+
+\subsubsection{\texttt{which\_children(supervisor)}}
+
+这与 \texttt{count\_children/1}的实现类似。因为我们的实现很简单，所以完全可以返回整个状态：
+
+\begin{code}{thy\_supervisor.ex -- which\_children/1的简单实现，返回监督器的整个状态}
+\begin{minted}[linenos]{elixir}
+defmodule ThySupervisor do
+  use GenServer
+
+  #######
+  # API #
+  #######
+
+  def which_children(supervisor) do
+    GenServer.call(supervisor, :which_children)
+  end
+
+  ######################
+  # Callback Functions #
+  ######################
+
+  def handle_call(:which_children, _from, state) do
+    {:reply, state, state}
+  end
+end
+\end{minted}
+\label{lst:which_children_simple}
+\end{code}
+
+\subsubsection{\texttt{terminate(reason, state)}}
+
+这个回调被用来关闭监督器进程。在我们终止监督器进程之前，我们需要终止所有与其链接的子进程，这是由\texttt{terminate\_children/1} 私有函数处理的：
+
+\begin{code}{thy\_supervisor.ex -- 终止监督器涉及到首先终止子进程}
+\begin{minted}[linenos]{elixir}
+defmodule ThySupervisor do
+  use GenServer
+
+  ######################
+  # Callback Functions #
+  ######################
+
+  def terminate(_reason, state) do
+    terminate_children(state)
+    :ok
+  end
+
+  #####################
+  # Private Functions #
+  #####################
+
+  defp terminate_children([]) do
+    :ok
+  end
+
+  defp terminate_children(child_specs) do
+    child_specs |> Enum.each(fn {pid, _} -> terminate_child(pid) end)
+  end
+
+  defp terminate_child(pid) do
+    Process.exit(pid, :kill)
+    :ok
+  end
+end
+\end{minted}
+\label{lst:terminate_supervisor}
+\end{code}
+
+ \subsection{ 处理崩溃}
+
+我把最好的留到了最后。当其中一个子进程崩溃时会发生什么？
+如果你注意的话，监督器会收到一个看起来像\mintinline{elixir}|{:EXIT, pid, reason}| 的消息。
+我们再次使用\texttt{handle\_info/3} 回调来处理退出消息。
+
+有两种情况需要考虑（除了 \texttt{:killed}，我们在\texttt{terminate\_child/1} 中处理了）。
+
+第一种情况是进程正常退出。在这种情况下，监督器不需要做任何事情，只需更新其状态：
+
+\begin{code}{thy\_supervisor.ex -- 当一个子进程正常退出时，不做任何操作}
+\begin{minted}[linenos]{elixir}
+def handle_info({:EXIT, from, :normal}, state) do
+  new_state = state |> HashDict.delete(from)
+  {:no_reply, new_state}
+end
+\end{minted}
+\label{lst:handle_normal_exit}
+\end{code}
+
+第二种情况是进程异常退出并且没有被强制杀死。在这种情况下，监督器应该自动重启失败的进程：
+
+\begin{code}{thy\_supervisor.ex -- 如果一个子进程因为异常原因退出，自动重启它}
+\begin{minted}[linenos]{elixir}
+def handle_info({:EXIT, old_pid, _reason}, state) do
+  case HashDict.fetch(state, old_pid) do
+    {:ok, child_spec} ->
+      case restart_child(old_pid, child_spec) do
+        {:ok, {pid, child_spec}} ->
+          new_state =
+            state
+            |> HashDict.delete(old_pid)
+            |> HashDict.put(pid, child_spec)
+
+          {:no_reply, new_state}
+
+        :error ->
+          {:no_reply, state}
+      end
+
+    _ ->
+      {:no_reply, state}
+  end
+end
+\end{minted}
+\label{lst:handle_abnormal_exit}
+\end{code}
+
+以上的函数并不新鲜。它几乎与 \texttt{restart\_child/2}的实现相同，只是子进程规范是\emph{重用}的。
+
+\subsection{完整的源代码}
+
+以下是我们手动实现的监督器的完整源代码：
+
+\begin{code}{thy\_supervisor.ex 的完整实现}
+\begin{minted}[linenos]{elixir}
+defmodule ThySupervisor do
+  use GenServer
+
+  #######
+  # API #
+  #######
+
+  def start_link(child_spec_list) do
+    GenServer.start_link(__MODULE__, [child_spec_list])
+  end
+
+  def start_child(supervisor, child_spec) do
+    GenServer.call(supervisor, {:start_child, child_spec})
+  end
+
+  def terminate_child(supervisor, pid) when is_pid(pid) do
+    GenServer.call(supervisor, {:terminate_child, pid})
+  end
+
+  def restart_child(supervisor, pid, child_spec) when is_pid(pid) do
+    GenServer.call(supervisor, {:restart_child, pid, child_spec})
+  end
+
+  def count_children(supervisor) do
+    GenServer.call(supervisor, :count_children)
+  end
+
+  def which_children(supervisor) do
+    GenServer.call(supervisor, :which_children)
+  end
+
+  ######################
+  # Callback Functions #
+  ######################
+
+  def init([child_spec_list]) do
+    Process.flag(:trap_exit, true)
+
+    state =
+      child_spec_list
+      |> start_children
+      |> Enum.into(HashDict.new())
+
+    {:ok, state}
+  end
+
+  def handle_call({:start_child, child_spec}, _from, state) do
+    case start_child(child_spec) do
+      {:ok, pid} ->
+        new_state = state |> HashDict.put(pid, child_spec)
+        {:reply, {:ok, pid}, new_state}
+
+      :error ->
+        {:reply, {:error, "error starting child"}, state}
+    end
+  end
+
+  def handle_call({:terminate_child, pid}, _from, state) do
+    case terminate_child(pid) do
+      :ok ->
+        new_state = state |> HashDict.delete(pid)
+        {:reply, :ok, new_state}
+
+      :error ->
+        {:reply, {:error, "error terminating child"}, state}
+    end
+  end
+
+  def handle_call({:restart_child, old_pid}, _from, state) do
+    case HashDict.fetch(state, old_pid) do
+      {:ok, child_spec} ->
+        case restart_child(old_pid, child_spec) do
+          {:ok, {pid, child_spec}} ->
+            new_state =
+              state
+              |> HashDict.delete(old_pid)
+              |> HashDict.put(pid, child_spec)
+
+            {:reply, {:ok, pid}, new_state}
+
+          :error ->
+            {:reply, {:error, "error restarting child"}, state}
+        end
+
+      _ ->
+        {:reply, :ok, state}
+    end
+  end
+
+  def handle_call(:count_children, _from, state) do
+    {:reply, HashDict.size(state), state}
+  end
+
+  def handle_call(:which_children, _from, state) do
+    {:reply, state, state}
+  end
+
+  def handle_info({:EXIT, from, :normal}, state) do
+    new_state = state |> HashDict.delete(from)
+    {:no_reply, new_state}
+  end
+
+  def handle_info({:EXIT, from, :killed}, state) do
+    new_state = state |> HashDict.delete(from)
+    {:no_reply, new_state}
+  end
+
+  def handle_info({:EXIT, old_pid, _reason}, state) do
+    case HashDict.fetch(state, old_pid) do
+      {:ok, child_spec} ->
+        case restart_child(old_pid, child_spec) do
+          {:ok, {pid, child_spec}} ->
+            new_state =
+              state
+              |> HashDict.delete(old_pid)
+              |> HashDict.put(pid, child_spec)
+
+            {:no_reply, new_state}
+
+          :error ->
+            {:no_reply, state}
+        end
+
+      _ ->
+        {:no_reply, state}
+    end
+  end
+
+  def terminate(_reason, state) do
+    terminate_children(state)
+    :ok
+  end
+
+  #####################
+  # Private Functions #
+  #####################
+
+  defp start_children([child_spec | rest]) do
+    case start_child(child_spec) do
+      {:ok, pid} ->
+        [{pid, child_spec} | start_children(rest)]
+
+      :error ->
+        :error
+    end
+  end
+
+  defp start_children([]), do: []
+
+  defp start_child({mod, fun, args}) do
+    case apply(mod, fun, args) do
+      pid when is_pid(pid) ->
+        Process.link(pid)
+        {:ok, pid}
+
+      _ ->
+        :error
+    end
+  end
+
+  defp terminate_children([]) do
+    :ok
+  end
+
+  defp terminate_children(child_specs) do
+    child_specs |> Enum.each(fn {pid, _} -> terminate_child(pid) end)
+  end
+
+  defp terminate_child(pid) do
+    Process.exit(pid, :kill)
+    :ok
+  end
+
+  defp restart_child(pid, child_spec) when is_pid(pid) do
+    case terminate_child(pid) do
+      :ok ->
+        case start_child(child_spec) do
+          {:ok, new_pid} ->
+            {:ok, {new_pid, child_spec}}
+
+          :error ->
+            :error
+        end
+
+      :error ->
+        :error
+    end
+  end
+end
+\end{minted}
+\label{lst:thy_supervisor_complete}
+\end{code}
+
+\section{一个样例运行（或者：它真的能工作吗？）}
+
+在我们开始测试我们的监督器之前，创建一个新文件\texttt{lib/thy\_worker.ex}：
+
+\begin{code}{lib/thy\_worker.ex -- 一个用于 ThySupervisor 的示例 worker}
+\label{lst:thy_worker_for_demo}
+\begin{minted}[linenos]{elixir}
+defmodule ThyWorker do
+  def start_link do
+    spawn(fn -> loop end)
+  end
+
+  def loop do
+    receive do
+      :stop ->
+        :ok
+
+      msg ->
+        IO.inspect(msg)
+        loop
+    end
+  end
+end
+\end{minted}
+\end{code}
+
+我们首先创建一个 worker：
+\begin{minted}[linenos]{elixir}
+iex > {:ok, sup_pid} = ThySupervisor.start_link([])
+  {:ok, #PID<0.86.0>}
+\end{minted}
+
+
+让我们创建一个进程并将其添加到监督器中。我们保存新生成的子进程的 pid。
+\begin{minted}[linenos]{elixir}
+iex > \{:ok, child_pid\} = ThySupervisor.start\_child(sup\_pid, \{ThyWorker, :start\_link, []\})
+\end{minted}
+
+让我们看看监督器中存在哪些链接：
+\begin{minted}[linenos]{elixir}
+iex(3)> Process.info(sup\_pid, :links)
+{:links, [\#PID<0.82.0>, \#PID<0.86.0>]}
+\end{minted}
+
+有趣的是，有两个进程链接到了监督器进程。第一个显然是我们刚刚生成的子进程。那么另一个是什么呢？
+\begin{minted}[linenos]{elixir}
+iex > self
+# PID<0.82.0>
+\end{minted}
+
+经过一些思考，我们应该能发现，由于监督器进程是由 shell进程生成并链接的，所以它的链接集中会有 shell 的 pid。
+
+让我们杀死子进程：
+
+\mintinline{elixir}|iex > Process.exit(child_pid, :crash)|
+
+当我们再次检查监督器的链接集时会发生什么？
+
+\begin{minted}[linenos]{elixir}
+|iex > Process.info(sup_pid, :links)
+  {:links, [#PID<0.82.0>, #PID<0.90.0>]}
+\end{minted}
+
+太棒了！监督器自动负责生成和链接新的子进程。为了说服我们自己，我们可以查看监督器的状态：
+
+\begin{minted}[linenos]{elixir}
+iex > ThySupervisor.which_children(sup_pid)
+# HashDict<[{#PID<0.90.0>, {ThyWorker, :start_link, []}}]>
+\end{minted}
+
+\section{总结}
+
+在本章中，我们通过几个例子强调了以下几点：
+
+\begin{itemize}
+
+\item  \emph{让它崩溃}的哲学意味着将错误检测和处理委托给另一个进程，而不是过度防御性编程
+\item  链接建立了进程之间的双向关系，当其中一个进程发生崩溃时，它们会传播退出信号
+\item  监视器在进程之间建立了单向关系，所以当被监视的进程死亡时，监视进程只会收到通知
+\item  退出信号可以被所谓的系统进程捕获，这些进程将退出信号转换为普通消息
+\item  使用进程和链接实现一个简单的监督器进程
+\end{itemize}
+
+在下一章中，我们准备深入研究 OTP Supervisor 行为。我们将学习最重要的Supervisor 特性，并通过构建一个 worker pooler来实验它们。有趣的时刻即将到来！

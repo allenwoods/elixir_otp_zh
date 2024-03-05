@@ -1,0 +1,1018 @@
+\chapter{进程101}\label{chapt:processes}
+
+本章内容包括：
+
+\begin{itemize}
+
+\item  Actor并发模型（Actor Concurrency Model）
+\item  创建进程
+\item  如何使用进程发送和接收消息
+\item  使用进程实现并发
+\item  如何使进程相互通信
+\end{itemize}
+
+理解进程的概念是非常重要的，它理所当然地拥有自己的一章。进程是Elixir中并发的基本单位。实际上，Erlang虚拟机（Erlang VM）支持高达1.34亿个进程，这使得所有的CPU都能愉快地运转。知道我充分利用了硬件资源，总是让我有一种温暖、愉悦的感觉。Erlang虚拟机创建的进程与操作系统无关。这些进程更轻量级，创建它们仅需要几微秒。
+
+我们将开始一个有趣的项目。在本章中，我们将构建一个简单的程序，用于报告特定城市/州/国家的温度。但首先，让我们了解一下actor并发模型。
+
+\section{Actor并发模型}
+
+Erlang（因此也包括Elixir）使用Actor并发模型。这意味着：
+
+\begin{itemize}
+	\item 每个\emph{actor}都是一个\emph{进程}。 
+  \item 每个进程执行一个\emph{特定任务}。 
+  \item 要让进程做某事，你需要\emph{向它发送消息}。进程也可以通过\emph{发送回另一个消息}来回复。
+  \item 进程可以处理的消息类型特定于进程本身。换句话说，消息是\emph{模式匹配}的。
+  \item 除此之外，进程\emph{不与其他进程共享任何信息}。
+\end{itemize}
+
+如果这一切现在看起来还有些模糊，不要担心。如果你做过面向对象编程，你会发现进程在很多方面类似于对象。甚至可以说它是更纯粹的面向对象形式。
+
+这里有一个思考actors的方式。Actors就像人一样。我们通过相互交谈来交流。例如，我的妻子告诉我洗碗。当然，我会通过洗碗来回应——我是个好丈夫。但如果我的妻子告诉我吃蔬菜，她会被忽略——我不会对此作出回应。实际上，我选择只对某些类型的消息做出回应。最后，我不知道她脑海中在想什么，她也不知道我脑海中在想什么。正如你将很快看到的，actor并发模型就像这样——只对某些类型的消息做出回应。
+
+\section{构建天气应用}
+
+从概念上讲，我们的应用程序非常简单。第一个版本接受一个包含位置的单个参数，并报告摄氏温度。这涉及向外部天气服务发出HTTP请求，并解析JSON响应以提取温度。
+
+\begin{figure}[!ht]
+    \centering
+    \includegraphics[width=0.8\linewidth]{3_1.png}
+    \caption{天气actor处理单个请求}
+    \label{fig:3_1}
+\end{figure}
+
+
+进行单个请求是微不足道的。但如果我们想要同时了解100个城市的温度怎么办？假设每个请求需要1秒钟，我们要等待100秒吗？显然不是！我们将看到如何进行并发请求，以便尽快获得结果。
+
+并发的一个特性是，我们永远不知道响应以何种顺序返回。例如，想象一下，我按字母顺序传入一个城市列表。我收到的回应绝对不保证以相同的顺序排列。
+
+我们如何确保响应的顺序是正确的呢？亲爱的读者，继续阅读下去，因为我们现在就开始在Elixir中的气象冒险。
+
+ \subsection{简单版本}
+
+我们从一个简单版本开始。也就是说，不会涉及到并发。另一方面，简单版本将包含所有需要发出请求、解析响应和返回结果的逻辑。在本章的结束时，你将学习如何：
+
+\begin{itemize}
+
+\item  使用mix安装和使用第三方库
+\item  向第三方API发出HTTP请求
+\item  使用模式匹配解析JSON响应
+\item  看看管道如何促进数据转换
+\end{itemize}
+
+这将是你要处理的第一个non-trival的程序。但是不用担心，你将在每一步都得到指导。让我们开始吧！
+
+\subsubsection{创建一个新项目}
+
+首要任务是创建一个新项目，更重要的是，给它起一个好名字。既然我是作者，我就来选择名字。在代码\ref{lst:create_new_project}中，我们使用\texttt{mix new <project name>} 来创建一个新项目
+
+
+\begin{code}{创建一个新项目}
+\begin{minted}[linenos]{bash}
+% mix new metex
+* creating README.md
+* creating .gitignore
+* creating mix.exs
+* creating config
+* creating config/config.exs
+* creating lib
+* creating lib/metex.ex
+* creating test
+* creating test/test_helper.exs
+* creating test/metex_test.exs
+Your mix project was created successfully.
+You can use mix to compile it, test it, and more:
+
+cd metex
+mix test
+% cd metex
+\end{minted}
+\label{lst:create_new_project}
+\end{code}
+
+按照指示，进入\texttt{metex}目录。
+
+\subsubsection{安装依赖项}
+
+打开\texttt{mix.exs}。你会看到以下内容：
+
+\begin{code}{ 默认生成的mix.exs文件}
+\begin{minted}[linenos]{elixir}
+defmodule Metex.Mixfile do
+  use Mix.Project
+
+  def project do
+    [app: :metex, version: "0.0.1", elixir: "~> 1.0", deps: deps]
+  end
+
+  def application do
+    [applications: [:logger]]
+  end
+
+  defp deps do
+    []
+  end
+end
+\end{minted}
+\label{lst:defautl_mix_exs}
+\end{code}
+
+每个由\texttt{mix}生成的项目都会包含这个文件。它由两个公共函数组成，\texttt{project}和\texttt{application}。这个\texttt{project}函数基本上是设置我们的项目。更重要的是，它通过调用\texttt{deps}私有函数来设置我们项目的依赖项。就目前而言，\texttt{deps}是一个空列表-暂时的。这个\texttt{application}函数用于生成一个应用资源文件。Elixir中的某些依赖项需要以特定的方式启动。像这样的依赖项在此函数中声明。例如，在我们的应用程序启动之前，先启动\texttt{logger}应用程序。
+
+让我们通过修改\texttt{deps}函数来添加两个依赖项，像代码\ref{lst:deps_in_mix_exs}这样：
+
+\textbf{代码3.3 }
+
+\begin{code}{在mix.exs中声明依赖项}
+\begin{minted}[linenos]{elixir}
+defp deps do
+    [
+    {:httpoison, "~> 0.9.0"},  #1
+    {:json,      "~> 0.3.0"}   #1
+    ]
+end
+
+#1 声明依赖项并指定相应的版本号
+\end{minted}
+\label{lst:deps_in_mix_exs}
+\end{code}
+
+\
+
+接下来，在\texttt{application}函数中添加一个条目：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+def application do
+  [applications: [:logger, :httpoison]]
+end
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+我怎么知道我应该包括\texttt{:httpoison}，而不是说，\texttt{:json}？事实上，我不知道。所以我总是做下一个最好的事情-阅读详细的手册。每次我安装一个库，我首先看一下README。在\texttt{:httpoison}的情况下，README清楚地说明了：
+
+\begin{figure}[!ht]
+    \centering
+    \includegraphics[width=0.8\linewidth]{3_2.png}
+    \caption{查看第三方库的README以获取重要的安装指令}
+    \label{fig:3_2}
+\end{figure}
+
+\subsubsection{依赖项版本号很重要！}
+
+注意你的依赖项的版本号。使用错误的版本号可能会导致令人困惑的错误。另一件需要注意的事情是，这些库中的许多都会指定它们与之兼容的Elixir的最小版本。
+
+确保你在Metex目录中，我们可以使用\texttt{mix deps.get}命令来安装我们的依赖项：
+
+\texttt{\% mix deps.get}
+注意到\texttt{mix}也有助于解决依赖项。在这种情况下，它引入了另外两个库，\texttt{hackney}和\texttt{idna}（代码\ref{lst:deps_get}）：
+
+\begin{code}{mix 自动解决依赖关系}
+\begin{minted}[linenos]{elixir}
+% mix deps.get
+Running dependency resolution
+* Getting httpoison (Hex package)
+Checking package (http://s3.hex.pm.global.prod.fastly.net/tarballs/httpoison-0.9.0.tar)
+Using locally cached package
+* Getting json (Hex package)
+Checking package (http://s3.hex.pm.global.prod.fastly.net/tarballs/json-0.3.2.tar)
+Using locally cached package
+* Getting hackney (Hex package)
+Checking package (http://s3.hex.pm.global.prod.fastly.net/tarballs/hackney-1.5.7.tar)
+Using locally cached package
+* Getting ssl_verify_fun (Hex package)
+Checking package (http://s3.hex.pm.global.prod.fastly.net/tarballs/ssl_verify_fun-1.1.0.tar)
+Using locally cached package
+* Getting mimerl (Hex package)
+Checking package (http://s3.hex.pm.global.prod.fastly.net/tarballs/mimerl-1.0.2.tar)
+Using locally cached package
+* Getting metrics (Hex package)
+Checking package (http://s3.hex.pm.global.prod.fastly.net/tarballs/metrics-1.0.1.tar)
+Using locally cached package
+* Getting idna (Hex package)
+Checking package (http://s3.hex.pm.global.prod.fastly.net/tarballs/idna-1.2.0.tar)
+Using locally cached package
+* Getting certifi (Hex package)
+Checking package (http://s3.hex.pm.global.prod.fastly.net/tarballs/certifi-0.4.0.tar)
+Using locally cached package
+\end{minted}
+\label{lst:deps_get}
+\end{code}
+
+\section{Worker模块}
+
+在我们开始实现Worker模块之前，我们需要从第三方天气服务OpenWeatherMap获取一个API密钥。请访问\texttt{http://openweathermap.org/}创建一个账户。完成后，你会看到你的API密钥已经为你创建好了：
+
+\begin{figure}[!ht]
+    \centering
+    \includegraphics[width=0.8\linewidth]{3_3.png}
+    \caption{在OpenWeatherMap创建账户并获取API密钥}
+    \label{fig:3_3}
+\end{figure}
+
+
+现在我们可以深入了解Worker模块的实现细节。Worker模块的工作是从OpenWeatherMap获取给定位置的温度，并解析结果。在\texttt{lib} 目录中创建
+\texttt{worker.ex}。以下是Worker模块的完整列表（代码\ref{lst:worker_ex_code}）：
+
+
+\begin{code}{worker.ex的完整源码。保存在lib/worker.ex中}
+\begin{minted}[linenos]{elixir}
+defmodule Metex.Worker do
+  def temperature_of(location) do
+    result = url_for(location) |> HTTPoison.get() |> parse_response
+
+    case result do
+      {:ok, temp} ->
+        "#{location}: #{temp}°C"
+
+      :error ->
+        "#{location} not found"
+    end
+  end
+
+  defp url_for(location) do
+    location = URI.encode(location)
+    "http://api.openweathermap.org/data/2.5/weather?q=#{location}&appid=#{apikey}"
+  end
+
+  defp parse_response({:ok, %HTTPoison.Response{body: body, status_code: 200}}) do
+    body |> JSON.decode!() |> compute_temperature
+  end
+
+  defp parse_response(_) do
+    :error
+  end
+
+  defp compute_temperature(json) do
+    try do
+      temp = (json["main"]["temp"] - 273.15) |> Float.round(1)
+      {:ok, temp}
+    rescue
+      _ -> :error
+    end
+  end
+
+  defp apikey do
+    "APIKEY-GOES-HERE"
+  end
+end
+\end{minted}
+\label{lst:worker_ex_code}
+\end{code}
+
+如果你不完全理解正在发生的事情，不要惊慌。我们将一点一点地浏览程序。现在，让我们看看如何从\texttt{iex}运行这个程序。从项目根目录启动\texttt{iex}，如下所示：\mintinline{elixir}|% iex –S mix|
+
+如果这是你第一次运行该命令，你会注意到一系列依赖项正在被编译。下次你运行\texttt{iex}时，除非你修改了依赖项，否则你不会看到这个。现在，让我们找出世界上一些最冷的地方的温度（代码\ref{lst:metex_worker_example_run}）：
+
+\begin{code}{Metex.Worker的示例运行}
+\begin{minted}[linenos]{elixir}
+iex(1) > Metex.Worker.temperature_of("Verkhoyansk, Russia")
+"Verkhoyansk, Russia: -37.3°C"
+\end{minted}
+\label{lst:metex_worker_example_run}
+\end{code}
+
+只是为了好玩，让我们再试一个：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex(2) > Metex.Worker.temperature_of("Snag, Yukon, Canada")
+"Snag, Yukon, Canada: -27.6°C"
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+当我们给出一个无意义的位置时会发生什么？
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex(3) > Metex.Worker.temperature_of("Omicron Persei 8")
+"Omicron Persei 8 not found"
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+现在我们已经看到了Worker模块的行动，让我们仔细看看并弄清楚它是如何工作的。我们从代码\ref{lst:temperature_of}中的\texttt{temperature\_of/1}函数开始：
+
+\begin{code}{Metex.Worker的核心 -\texttt{temperature\_of/1}函数}
+\begin{minted}[linenos]{elixir}
+defmodule Metex.Worker do
+
+def temperature_of(location) do
+    result = url_for(location) |> HTTPoison.get |>  parse_response #1
+    case result do
+        {:ok, temp} ->                          #2
+        "#{location}: #{temp}°C"              #2
+        :error ->                               #3
+        "#{location} not found"               #3
+    end
+end
+
+# ...end
+
+#1 数据转换：从URL到HTTP响应，再到解析该响应
+#2 成功解析的响应返回温度和位置
+#3 否则，返回一个错误消息
+\end{minted}
+\label{lst:temperature_of}
+\end{code}
+
+整个函数中最重要的一行是
+\begin{minted}[linenos]{elixir}
+result = location \|> url_for \|> HTTPoison.get \|> parse_response
+\end{minted}
+
+如果不使用管道操作符，我们将不得不这样编写我们的函数：\mintinline{elixir}|result = parse_response(HTTPoison.get(url_for(location)))|
+
+\texttt{location |> url\_for}构造了用于调用天气API的URL。例如，新加坡的URL将是（用你自己的替换\texttt{<APIKEY>}）：
+\texttt{http://api.openweathermap.org/data/2.5/weather?q=Singapore\&appid=<APIKEY>}
+
+一旦我们有了URL，我们就可以使用httpoison，一个HTTP客户端，来发出GET请求：
+\begin{minted}[linenos]{elixir}
+location \|> url_for \|> HTTPoison.get
+\end{minted}
+
+如果你在浏览器中尝试了那个URL，你会得到这样的东西（我已经为了简洁而修剪了JSON）：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+{
+...
+"main": {
+"temp": 299.86,
+"temp_min": 299.86,
+"temp_max": 299.86,
+"pressure": 1028.96,
+"sea_level": 1029.64,
+"grnd_level": 1028.96,
+"humidity": 100
+},
+...}
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+让我们仔细看看HTTP客户端的响应。也可以在\texttt{iex}中试试这个。如果你退出了\texttt{iex}，记得使用\texttt{iex -S mix}
+这样依赖项（如httpoison）就能正确加载。
+
+我们可以试试新加坡的温度URL（代码\ref{lst:use_httpoison_get}）：
+
+\begin{code}{使用HTTPoison发出GET请求}
+\begin{minted}[linenos]{elixir}
+iex(1) >
+  HTTPoison.get("http://api.openweathermap.org/data/2.5/weather?q=Singapore&appid=<APIKEY>")
+\end{minted}
+\label{lst:use_httpoison_get}
+\end{code}
+
+看看结果：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+{:ok,
+ %HTTPoison.Response{
+   body:
+     "{\"coord\":{\"lon\":103.85,\"lat\":1.29},\"sys\":{\"message\":0.098,\"country\":\"SG\",\"sunrise\":1421795647,\"sunset\":1421839059},\"weather\":[{\"id\":802,\"main\":\"Clouds\",\"description\":\"scattered clouds\",\"icon\":\"03n\"}],\"base\":\"cmc stations\",\"main\":{\"temp\":299.86,\"temp_min\":299.86,\"temp_max\":299.86,\"pressure\":1028.96,\"sea_level\":1029.64,\"grnd_level\":1028.96,\"humidity\":100},\"wind\":{\"speed\":6.6,\"deg\":29.0007},\"clouds\":{\"all\":36},\"dt\":1421852665,\"id\":1880252,\"name\":\"Singapore\",\"cod\":200}\n",
+   headers: %{
+     "Access-Control-Allow-Credentials" => "true",
+     "Access-Control-Allow-Methods" => "GET, POST",
+     "Access-Control-Allow-Origin" => "*",
+     "Connection" => "keep-alive",
+     "Content-Type" => "application/json; charset=utf-8",
+     "Date" => "Wed, 21 Jan 2015 15:59:14 GMT",
+     "Server" => "nginx",
+     "Transfer-Encoding" => "chunked",
+     "X-Source" => "redis"
+   },
+   status_code: 200
+ }}
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+如果传入一个不存在的页面的URL会怎样？
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex(2) > HTTPoison.get("http://en.wikipedia.org/phpisawesome")
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+这将返回类似这样的东西：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+{:ok,
+ %HTTPoison.Response{
+   body: "<html>Opps</html>",
+   headers: %{
+     "Accept-Ranges" => "bytes",
+     "Age" => "12",
+     "Cache-Control" => "s-maxage=2678400, max-age=2678400",
+     "Connection" => "keep-alive",
+     "Content-Length" => "2830",
+     "Content-Type" => "text/html; charset=utf-8",
+     "Date" => "Wed, 21 Jan 2015 16:04:48 GMT",
+     "Refresh" => "5; url=http://en.wikipedia.org/wiki/phpisawesome",
+     "Server" => "Apache",
+     "Set-Cookie" => "GeoIP=SG:Singapore:1.2931:103.8558:v4; Path=/; Domain=.wikipedia.org",
+     "Via" => "1.1 varnish, 1.1 varnish, 1.1 varnish",
+     "X-Cache" => "cp1053 miss (0), cp4016 hit (1), cp4018 frontend miss (0)",
+     "X-Powered-By" => "HHVM/3.3.1",
+     "X-Varnish" => "2581642697, 646845726 646839971, 2421023671",
+     "X-Wikimedia-Debug" => "prot=http:// serv=en.wikipedia.org loc=/phpisawesome"
+   },
+   status_code: 404
+ }}
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+最后，一个荒谬的URL会产生什么呢？
+
+\begin{code}{使用HTTPoison发出无效的GET请求}
+\begin{minted}[linenos]{elixir}
+iex(3) > HTTPoison.get("phpisawesome")
+{:error, %HTTPoison.Error{id: nil, reason: :nxdomain}}
+\end{minted}
+\label{lst:use_httpoison_get_invalid}
+\end{code}
+
+我们刚刚看到了HTTPoison.get(url)可以返回的至少三种变体。正确路径返回一个类似于
+\mintinline{elixir}|{:ok, \%HTTPoison.Response\{status_code: 200, body: content\}\}}|
+的模式。上面的模式传达了以下信息：
+
+\begin{itemize}
+
+\item  这是一个两元素元组
+\item  元组的第一个元素是一个\texttt{:ok}原子，后面跟着一个表示响应的结构
+\item  响应是\texttt{HTTPoison.Response}类型的，包含至少两个字段
+\item  \texttt{status\_code}的值是200，表示一个成功的\texttt{HTTP  GET}请求
+\item  body的值在content中被\emph{捕获}
+\end{itemize}
+
+如你所见，模式匹配非常简洁，是表达你想要的东西的一种美丽的方式。同样，错误元组有以下模式：
+\mintinline{elixir}|{:error, \%HTTPoison.Error\{reason: reason\}}|。
+
+让我们再做一次相同的分析：
+\begin{itemize}
+
+\item  这是一个两元素元组
+\item  元组的第一个元素是一个\texttt{:error}原子，后面跟着一个表示错误的结构
+\item  响应是\texttt{HTTPoison.Error}类型的，包含至少一个字段，即reason
+\item  错误的原因在\texttt{reason}中被捕获
+\end{itemize}
+
+牢记这些，让我们看一下\texttt{parse\_response/1}函数（代码\ref{lst:parse_response}）：
+
+\begin{code}{parse\_response/1函数中的模式匹配}
+\begin{minted}[linenos]{elixir}
+defp parse_response({:ok, %HTTPoison.Response{body: body, status_code: 200}}) do
+  body |> JSON.decode!() |> compute_temperature
+end
+
+defp parse_response(_) do
+  :error
+end
+\end{minted}
+\label{lst:parse_response}
+\end{code}
+
+在这里，我们指定了\texttt{parse\_response/1}的两个版本。第一个版本匹配成功的GET请求，因为我们正在匹配一个类型为\texttt{HTTPoison.Response}的响应，并确保\texttt{status\_code}是200。否则，我们将任何其他类型的响应视为错误。现在让我们仔细看看\texttt{parse\_response/1}的第一个版本。
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+defp parse_response({:ok, %HTTPoison.Response{body: body, status_code: 200}}) do
+  # ...
+end
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+在成功的模式匹配后，JSON的字符串表示被捕获在body变量中。为了将其转换为''真正''的JSON，我们需要解码它：
+
+\texttt{"body |> JSON.decode!"}
+然后我们将这个JSON传递给\texttt{compute\_temperature/1}函数。这是函数的内容：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+defp compute_temperature(json) do
+  try do
+    temp = (json["main"]["temp"] - 273.15) |> Float.round(1)
+    {:ok, temp}
+  rescue
+    _ -> :error
+  end
+end
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+我们在\texttt{try … rescue … end}块中包装计算。我们试图从给定的JSON中检索温度，然后进行一些算术运算。在这些点中的任何一个都可能发生错误。如果发生错误，我们希望返回结果是一个\texttt{:error}原子。否则，返回一个包含\texttt{:ok}作为第一个元素和温度的两元素元组。具有不同``形状''的返回值非常有用，因为例如调用此函数的代码可以轻松地在成功和失败的情况下进行模式匹配。在接下来的章节中，你将看到更多我们可以利用模式匹配的机会。
+
+在这里，我们减去273.15，因为API以开尔文提供结果。我们还将温度四舍五入到小数点后一位。
+
+如果\texttt{HTTP GET}响应与第一个模式不匹配，会发生什么呢？这就是第二个\texttt{parse\_response/1}函数的工作：
+
+\begin{code}{这个版本的parse\_response/1匹配任何消息}
+\begin{minted}[linenos]{elixir}
+defp parse_response(_) do
+  :error
+end
+\end{minted}
+\label{lst:parse_response_2}
+\end{code}
+
+在这里，除了成功的响应之外，任何其他响应都被视为错误。基本上就是这样！你现在应该对\texttt{Worker}的工作方式有了更好的理解。让我们学习一下在Elixir中如何创建进程。
+
+\section{创建进程以实现并发}
+
+假设我们有一份我们想要获取温度的城市列表：
+
+\begin{code}{创建城市列表}
+\begin{minted}[linenos]{elixir}
+iex > cities = ["Singapore", "Monaco", "Vatican City", "Hong Kong", "Macau"]
+\end{minted}
+\label{lst:create_city_list}
+\end{code}
+
+接下来，我们一次向\texttt{Worker}发送每个请求：
+
+\begin{code}{一次请求查找城市的温度}
+\begin{minted}[linenos]{elixir}
+iex(2) > cities |> Enum.map(fn city -> Metex.Worker.temperature_of(city) end)
+\end{minted}
+\label{lst:request_cities_temperature}
+\end{code}
+
+结果是：\texttt{["Singapore: 27.5°C", "Monaco: 7.3°C", "Vatican City: 10.9°C", "Hong Kong: 18.1°C", "Macau: 19.5°C"]}
+这种方法的问题是它是\emph{浪费的}。随着列表大小的增长，等待所有响应完成所需的时间也会增长。只有在前一个请求完成后，下一个请求才会被处理。我们可以做得更好。
+
+\begin{figure}[!ht]
+    \centering
+    \includegraphics[width=0.8\linewidth]{3_2a.png}
+    \caption{没有并发，下一个请求将不得不等待前一个请求完成，这非常低效}
+    \label{fig:3_2a}
+\end{figure}
+
+
+需要意识到的一个重要事情是，\emph{每个请求并不依赖于其他请求}。换句话说，我们可以将每个对\texttt{Metex.Worker.temperature\_of/1}的调用打包到一个进程中。让我们教\texttt{Worker}如何响应消息。首先，将\texttt{loop/0}函数添加到\texttt{lib/worker.ex:}
+
+\begin{code}{将loop/0函数添加到\texttt{Worker}中，以便它可以响应消息}
+\begin{minted}[linenos]{elixir}
+defmodule Metex.Worker do
+
+    def loop do
+        receive do
+            {sender_pid, location} ->
+            send(sender_pid, {:ok, temperature_of(location)})
+            _ ->
+            IO.puts "don't know how to process this message"
+        end
+        loop
+    end
+
+    defp temperature_of(location) do
+    # ...
+    end
+
+# ...end
+\end{minted}
+\label{lst:add_loop_to_worker}
+\end{code}
+
+在我们深入了解细节之前，让我们先玩玩这个。如果你已经打开了iex，你可以\emph{重新加载}模块：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex > r(Metex.Worker)
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+否则，你可以再次运行\texttt{iex -S mix}。首先，我们创建一个运行\texttt{Worker}的循环函数的进程：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex > pid = spawn(Metex.Worker, :loop, [])
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+内置的spawn函数创建一个进程。spawn有两个版本。第一个版本将一个函数作为参数，第二个版本将一个给定的模块和函数传递给定的参数。两个版本都返回一个\emph{进程id}，或者说\emph{pid}，作为结果。
+
+\subsection{接收消息}
+
+进程ID（pid）是对进程的\emph{引用}，就像在面向对象编程中初始化一个对象会给你一个对该对象的\emph{引用}一样。有了pid，我们就可以向进程发送\emph{消息}。进程可以接收的消息类型在接收块中定义（代码\ref{lst:handlable_message_types}）：
+
+
+\begin{code}{进程可以接收的消息类型在接收块中定义}
+\begin{minted}[linenos]{elixir}
+receive do
+  {sender_pid, location} ->
+    send(sender_pid, {:ok, temperature_of(location)})
+
+  _ ->
+    IO.puts("don't know how to process this message")
+end
+\end{minted}
+\label{lst:handlable_message_types}
+\end{code}
+
+消息是从\emph{上到下}进行模式匹配的。在这种情况下，如果传入的消息是一个两元素元组，那么将执行主体。任何其他消息都将在第二个模式中进行模式匹配。
+
+如果我们将上述代码的函数子句交换顺序，会发生什么呢（代码\ref{lst:message_receive_order_important}）：
+
+
+\begin{code}{模式匹配是从上到下进行的。交换接收到的消息的顺序很重要！}
+\begin{minted}[linenos]{elixir}
+receive do
+_ ->                                  #1
+IO.puts "don't know how to process this message"
+{sender_pid, location} ->
+send(sender_pid, {:ok, temperature_of(location)})
+end
+#1 这匹配任何消息！
+\end{minted}
+\label{lst:message_receive_order_important}
+\end{code}
+
+如果你试图运行这个，Elixir会有帮助地警告你：
+\mintinline{elixir}|{lib/worker.ex:7: warning: this clause cannot match because a previous clause at line 5 always matches}|
+
+换句话说，\mintinline{elixir}|{sender_pid, location}|将\emph{永远不会}被匹配，因为匹配所有操作符（``\texttt{\_"}），顾名思义，将\emph{贪婪地}匹配它所遇到的每一条消息。
+
+一般来说，将匹配所有的情况作为最后一个要匹配的消息是一种好的做法。这是因为未匹配的消息会保留在邮箱中。因此，通过反复向一个不处理未匹配消息的进程发送消息，可能会使虚拟机耗尽内存。
+
+ \subsection{ 发送消息}
+
+消息是使用内置的\texttt{send/2}函数发送的。第一个参数是你想要发送消息的进程的pid。第二个参数是实际的消息。
+
+\begin{code}{\texttt{Worker}可以接收的消息的模式}
+\begin{minted}[linenos]{elixir}
+receive do
+{sender_pid, location} ->               #1
+send(sender_pid, {:ok, temperature_of(location)})
+end
+
+#1 进入的消息包含发送者pid和位置
+\end{minted}
+\label{lst:worker_receive_message_pattern}
+\end{code}
+
+在这里，我们将请求的结果发送给\texttt{sender\_pid}。我们从哪里得到\texttt{sender\_pid}呢？当然是从进入的消息中！如果你仔细看，我们期望进入的消息由发送者的pid和位置组成。将发送者的pid（或者说任何进程id）放入就像在信封背面放一个\emph{返回地址}一样。它为收件人提供了一个回复的途径。
+
+让我们发送一个消息给我们之前创建的进程（代码\ref{lst:use_send2_send_message}）：
+
+\begin{code}{使用send/2向进程发送消息}
+\begin{minted}[linenos]{elixir}
+iex > send(pid, {self, "Singapore"})
+\end{minted}
+\label{lst:use_send2_send_message}
+\end{code}
+
+结果是\mintinline{elixir}|{#PID<0.125.0>, "Singapore"}|。
+
+等等，除了返回结果，什么都没有发生！让我们稍微分解一下。首先要注意的是，\texttt{send/2}的结果总是\emph{消息}。第二件事是，\texttt{send/2}总是立即返回。换句话说，\texttt{send/2}就像是发射-忘记。所以这就解释了我们是如何得到结果的。但是\emph{为什么}我们没有得到任何结果呢？
+
+我们将什么作为发送者pid传入消息有效载荷？\texttt{self}！\texttt{self}到底是什么？\texttt{self}是调用进程的pid。在这种情况下，它是\texttt{iex}shell会话的pid。我们实际上是告诉\texttt{Worker}将所有的回复发送到shell会话。要从shell会话中获取回复，我们可以使用内置的\texttt{flush/0}函数（代码\ref{lst:useflush0retrieve}）：
+
+\begin{code}{使用flush/0检索发送到shell进程的消息}
+\begin{minted}[linenos]{elixir}
+iex > flush
+"Singapore: 27.5°C"
+:ok
+\end{minted}
+\label{lst:useflush0retrieve}
+\end{code}
+
+\texttt{flush/0}清除了发送到shell的所有消息并打印它们出来。因此，下次你再做一次\texttt{flush}，你只会得到\texttt{:ok}原子。让我们看看这个在实践中是如何工作的。再次，我们有一个城市列表：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex > cities = ["Singapore", "Monaco", "Vatican City", "Hong Kong", "Macau"]
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+然后，我们遍历每个城市。在每次迭代中，我们生成一个新的\texttt{Worker}。使用新\texttt{Worker}的pid，我们发送一个包含返回地址（\texttt{iex}shell会话）和城市的两元素元组作为消息（\ref{lst:gen_process_each_city}）：
+
+
+\begin{code}{对于每个城市，生成一个进程来查找该城市的温度}
+\begin{minted}[linenos]{elixir}
+iex >
+  cities
+  |> Enum.each(fn city ->
+    pid = spawn(Metex.Worker, :loop, [])
+    send(pid, {self, city})
+  end)
+\end{minted}
+\label{lst:gen_process_each_city}
+\end{code}
+
+现在，让我们刷新消息：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex > flush
+{:ok, "Hong Kong: 17.8°C"}
+{:ok, "Singapore: 27.5°C"}
+{:ok, "Macau: 18.6°C"}
+{:ok, "Monaco: 6.7°C"}
+{:ok, "Vatican City: 11.8°C"}
+:ok
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+太棒了！我们终于得到了我们的结果。注意结果\emph{不是}按任何顺序排列的。这是因为哪个响应先完成就可以在完成后尽快将回复发送回发送者。如果你再次运行迭代，你可能会得到不同顺序的结果。
+
+\begin{figure}[!ht]
+    \centering
+    \includegraphics[width=0.8\linewidth]{3_4.png}
+    \caption{当进程不必等待彼此时，发送消息的顺序不能保证}
+    \label{fig:3_4}
+\end{figure}
+
+
+再看一下 \texttt{loop} 函数。首先要注意的是，它是递归的- 在处理完一条消息后，它会调用自己：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+def loop do
+  receive do
+    {sender_pid, location} ->
+      send(sender_pid, {:ok, temperature_of(location)})
+
+    _ ->
+      send(sender_pid, "Unknown message")
+  end
+
+  # 1
+  loop
+end
+
+# 1 对loop的递归调用
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+\
+
+你可能会想，为什么我们需要循环。一般来说，进程应该能够处理多于一条的消息。如果我们省略了递归调用，那么进程在处理完第一条（也是唯一的）消息后，就会退出，并被垃圾回收。我们通常希望我们的进程能够处理多于一个的进程！因此，我们需要对消息处理逻辑进行递归调用。
+
+\section{用另一个Actor收集和操作结果}
+
+将结果发送到shell会话对于查看\texttt{Worker}发送的消息很有用，但仅此而已。如果我们想要操作结果，比如说，对它们进行排序，我们需要找到另一种方法。我们可以创建另一个actor来收集结果，而不是使用shell会话作为发送者。
+
+这意味着这个actor必须跟踪\emph{期望的}消息数量。换句话说，actor必须保持状态。我们该如何做呢？
+
+首先，让我们设置actor。创建一个名为\texttt{lib/coordinator.ex}的文件，并按照代码\ref{lst:code_coordinator}中的内容填充它：
+
+\begin{code}{coordinator.ex的完整源代码}
+\begin{minted}[linenos]{elixir}
+defmodule Metex.Coordinator do
+  def loop(results \\ [], results_expected) do
+    receive do
+      {:ok, result} ->
+        new_results = [result | results]
+
+        if results_expected == Enum.count(new_results) do
+          send(self, :exit)
+        end
+
+        loop(new_results, results_expected)
+
+      :exit ->
+        IO.puts(results |> Enum.sort() |> Enum.join(", "))
+
+      _ ->
+        loop(results, results_expected)
+    end
+  end
+end
+\end{minted}
+\label{lst:code_coordinator}
+\end{code}
+
+让我们看看我们如何将协调器和\texttt{Worker}一起使用。打开\texttt{lib/metex.ex}，并输入以下内容（代码\ref{lst:create_coordinator_worker_process}）：
+
+
+\begin{code}{在lib/metex.ex中创建一个协调器进程和\texttt{Worker}进程的函数}
+\begin{minted}[linenos]{elixir}
+defmodule Metex do
+  def temperatures_of(cities) do
+    # 1
+    coordinator_pid =
+      spawn(Metex.Coordinator, :loop, [[], Enum.count(cities)])
+
+    # 2
+    cities
+    |> Enum.each(fn city ->
+      # 3
+      worker_pid = spawn(Metex.Worker, :loop, [])
+      # 4
+      send(worker_pid, {coordinator_pid, city})
+    end)
+  end
+end
+
+# 1 创建一个协调器进程 
+# 2 遍历每个城市 
+# 3 创建一个工作进程并执行其循环函数
+# 4 向\texttt{Worker}发送一条包含协调器进程pid和城市的消息
+\end{minted}
+\label{lst:create_coordinator_worker_process}
+\end{code}
+
+然后，我们可以通过首先创建一个城市列表来找出城市的温度
+
+\mintinline{elixir}|iex > cities = ["Singapore", "Monaco", "Vatican City", "Hong Kong", "Macau"]|
+然后调用Metex.temperatures\_of/1：
+
+\mintinline{elixir}|iex > Metex.temperatures_of(cities)|
+结果如预期：
+
+\texttt{Hong Kong: 17.8°C, Macau: 18.4°C, Monaco: 8.8°C, Singapore: 28.6°C, Vatican City: 8.5°C}
+这就是\texttt{Metex.temperatures\\\_of/1}的工作原理。首先，我们创建一个协调器进程。协调器进程的循环函数期望两个参数，当前收集的结果和它期望的结果总数。因此，当我们首次创建协调器时，我们用一个初始为空的结果列表和城市数量初始化它：
+
+\mintinline{elixir}|iex > coordinator_pid = spawn(Metex.Coordinator, :loop, [[], Enum.count(cities)])|
+
+现在我们有了等待来自\texttt{Worker}消息的协调器进程。给定一个城市列表，我们遍历每个城市，创建一个\texttt{Worker}，然后向\texttt{Worker}发送一条包含协调器pid和城市的消息。
+
+\begin{code}{为每个城市生成工作进程，并将协调器进程设置为\texttt{Worker}消息的接收者}
+\begin{minted}[linenos]{elixir}
+iex >
+  cities
+  |> Enum.each(fn city ->
+    worker_pid = spawn(Metex.Worker, :loop, [])
+    send(worker_pid, {coordinator_pid, city})
+  end)
+\end{minted}
+\label{lst:generate_worker_process_for_each_city}
+\end{code}
+
+一旦所有五个\texttt{Worker}完成了请求，协调器将尽职尽责地报告结果：
+
+\texttt{Hong Kong: 16.6°C, Macau: 18.3°C, Monaco: 8.1°C, Singapore: 26.7°C, Vatican City: 9.9°C}
+成功！注意结果是按字典顺序排序的。现在是时候深入研究协调器进程，找出它是如何工作的了。
+
+协调器可以从\texttt{Worker}那里接收哪些消息？检查\texttt{receive do ... end}块，我们可以得出至少有两种我们特别感兴趣的消息：
+
+\begin{itemize}
+	\item \mintinline{elixir}|{:ok, result}|
+  \item \texttt{:exit}
+\end{itemize}
+
+其他类型的消息将被忽略。让我们更详细地检查每种消息。
+
+\subsubsection{\{:ok, result\} -顺利进行的消息}
+
+这是我们期望从\texttt{Worker}那里收到的''顺利进行的''消息，如果没有出错的话（代码\ref{lst:successful_message}）：
+
+
+\begin{code}{顺利进行的消息}
+\begin{minted}[linenos]{elixir}
+def loop(results \\ [], results_expected) do
+  receive do
+    {:ok, result} ->
+      # 1
+      new_results = [result | results]
+      # 2
+      if results_expected == Enum.count(new_results) do
+        # 3
+        send(self, :exit)
+      end
+
+      # 4
+      loop(new_results, results_expected)
+
+      # ... 其他模式省略 ...
+  end
+end
+
+# 1 将结果添加到当前结果列表中
+# 2 检查是否已收集到所有结果
+# 3 向协调器发送退出消息
+# 4 使用新的结果循环。注意，results\_expected保持不变
+\end{minted}
+\label{lst:successful_message}
+\end{code}
+
+
+当协调器收到符合\mintinline{elixir}|{:ok, result}|模式的消息时，它首先将结果添加到当前的结果列表中。
+
+\begin{figure}[!ht]
+    \centering
+    \includegraphics[width=0.8\linewidth]{3_5.png}
+    \caption{当第一个结果进入时，actor将结果保存在列表中}
+    \label{fig:3_5}
+\end{figure}
+
+
+接下来，我们检查协调器是否已经收到了预期的正确结果数量。假设没有。在这种情况下，循环函数再次调用自己。注意到循环的递归调用的参数。这次我们传入\texttt{new\_results}，而\texttt{results\_expected}保持不变。
+
+\begin{figure}[!ht]
+    \centering
+    \includegraphics[width=0.8\linewidth]{3_6.png}
+    \caption{当协调器收到下一条消息时，它再次将其存储在结果列表中}
+    \label{fig:3_6}
+\end{figure}
+
+这就是actor中保持状态的方式。参数的\emph{副本}被修改，然后传递到循环函数中，在下一次对自身的函数调用中，它将可用。
+
+
+\subsection{\texttt{:exit} - 中断信号消息}
+
+当协调器收到所有的消息时，它必须找到一种方法来告诉自己停止，并在必要时报告结果。一种简单的方法是通过一个''中断信号''消息（见代码\ref{lst:break_signal_message}）。
+
+\begin{figure}[!ht]
+    \centering
+    \includegraphics[width=0.8\linewidth]{3_7.png}
+    \caption{当协调器收到:exit消息时，它按字母顺序返回结果，然后退出}
+    \label{fig:3_7}
+\end{figure}
+
+注意，\texttt{:exit}消息本身并不特殊。你可以称之为\texttt{:kill}、\texttt{:self\\\_destruct}或\texttt{:kaboom}。
+
+当协调器收到\texttt{:exit}消息时，它会打印出用逗号分隔的字典顺序的结果。由于我们希望协调器退出，我们不需要调用\texttt{loop}函数。
+
+\begin{code}{中断信号消息}
+\begin{minted}[linenos]{elixir}
+def loop(results \\ [], results_expected) do
+  receive do
+    # ... 其他模式省略 ...
+
+    :exit ->
+      # 1
+      IO.puts(results |> Enum.sort() |> Enum.join(", "))
+
+      # ... 其他模式省略 ...
+  end
+end
+
+# 1 按字典顺序打印结果，用逗号分隔
+\end{minted}
+\label{lst:break_signal_message}
+\end{code}
+
+\subsection{其他消息}
+
+最后，我们必须处理协调器可能接收到的任何其他类型的消息。我们使用\texttt{\\\_}操作符捕获这些不需要的消息。最后，我们需要记住再次循环，尽管我们保持参数不变（见代码\ref{lst:match_all_other_messages}）：
+
+\begin{code}{匹配所有其他消息}
+\begin{minted}[linenos]{elixir}
+def loop(results \\ [], results_expected) do
+  receive do
+    # ... 其他模式省略 ...
+    # 1
+    _ ->
+      # 2
+      loop(results, results_expected)
+  end
+end
+
+# 1 匹配所有其他类型的消息
+
+# 2 再次循环，保持参数不变
+\end{minted}
+\label{lst:match_all_other_messages}
+\end{code}
+
+
+\subsection{宏观视角}
+
+恭喜你 -你刚刚用Elixir编写了你的第一个并发程序！你使用了多个进程来并发地执行计算。在执行计算时，没有一个进程需要等待其他进程，除了协调器进程。
+
+需要强调的一个重要点是，这里没有共享内存。进程内状态的改变只能通过发送消息来实现。这与线程不同，因为线程是共享内存的。这意味着多个线程可以修改同一块内存，这是并发错误（和头痛）的无尽之源。
+
+在设计你自己的并发程序时，决定进程应该接收和发送的消息类型，以及进程之间的交互是很重要的。在我们的示例程序中，我决定使用\mintinline{elixir}|{:ok, result}|和\texttt{:exit}作为协调器进程的消息，使用\mintinline{elixir}|{sender_pid, location}|作为工作进程的消息。我发现，画出各个进程之间的交互以及正在发送和接收的消息是非常有帮助的。抵制直接跳入编码的诱惑，花几分钟时间进行草图绘制。这样做将节省你数小时的挠头和咒骂的时间！
+
+ \section{练习}
+
+进程是Elixir的基础。只有通过运行和实验代码，你才能更好地理解。
+
+\begin{enumerate}
+  \item 阅读\texttt{send}和\texttt{receive}的文档。对于\texttt{send}，找出你可以发送消息的有效目标。对于\texttt{receive}，研究文档提供的示例。\pagenote{http://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.116.1969\&rep=rep1\&type=pdf}
+  \item 阅读\texttt{Process}的文档\pagenote{https://www.erlang.org/doc/man/erl\#max\_processes}。
+  \item 编写一个程序，生成两个进程。第一个进程，在收到\texttt{ping}消息时，回复一个\texttt{pong}消息。第二个进程，在收到\texttt{pong}消息时，向发送者回复一个\texttt{ping}消息。
+\end{enumerate}
+
+ \section{总结}
+
+在本章中，我们介绍了进程这个至关重要的主题。你被介绍到了Actor并发模型。通过示例应用，我们学习了如何：
+
+\begin{enumerate}
+  \item 创建进程
+  \item 使用进程发送和接收消息
+  \item 可以使用多个进程实现并发
+  \item 工作进程的消息可以由另一个协调器进程收集和操作
+\end{enumerate}
+
+你刚刚尝试了Elixir的并发编程！在做练习的时候玩得开心，一定要给你的大脑稍微休息一下。我们下一章见，我们将学习Elixir的\emph{秘密酱料}
+- OTP！
+
+\printnotes*

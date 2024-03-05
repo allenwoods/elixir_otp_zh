@@ -1,0 +1,1480 @@
+\chapter{分布式和负载均衡}\label{chapt:load-balance}
+
+本章内容包括：
+
+\begin{itemize}
+
+\item  分布式Elixir的基础
+\item  实现分布式负载测试器
+\item  构建命令行应用程序
+\item  任务：一个用于短暂计算的抽象
+\item  实现分布式且容错的应用程序
+\end{itemize}
+
+这一章和下一章可能是最有趣的章节（我每一章都这么说）。在这一章中，我们将探索Erlang
+VM的分布式能力。我们将学习创建节点集群和远程生成进程的分布式原语。在下一章中，我们将探讨分布式系统中的故障转移和接管。
+
+为了演示所有这些概念，我们将构建\emph{两个}应用程序。第一个是一个命令行工具，用于对网站进行负载测试。是的，这完全可以被用于邪恶的目的，但我将把它留给你自己的发挥。
+
+另一个应用程序将展示当一个节点故障时，集群是如何通过让另一个节点自动上线来接替故障节点的。更进一步，它还将展示当一个优先级更高的之前故障的节点重新加入集群时，一个节点是如何放弃控制权的。
+
+\section{为什么要分布式？}
+
+至少有两个好理由让你想要创建一个分布式系统。当你正在构建的应用程序超出了单个机器的物理能力时，你可以选择升级那个单机或者添加另一台机器。单个机器能升级的程度是有限的。同样，单个机器能处理的也有物理限制。例如打开的文件句柄数量以及网络连接数。有时候，机器需要因计划性维护或升级而被关闭。有了分布式系统，你可以设计负载在多台机器上分散。换句话说，你正在实现\emph{负载均衡}。
+
+容错是考虑构建分布式系统的另一个原因。这是当我们有一个或多个节点在监控运行应用程序的节点。如果那个节点故障了，下一个排队的节点将自动接管那个节点。这样的设置意味着你消除了单点故障（除非你的所有节点都托管在单一机器上！）。
+
+不要误解；鉴于问题的性质，分布式系统仍然会很难。你仍然需要处理分布式系统中出现的权衡和问题，例如网络分裂。然而，Elixir和Erlang
+VM提供的工具可以让你在构建分布式系统时更加容易。
+
+\section{分布式的负载均衡}
+
+在本节中，我们将学习如何构建一个分布式负载测试器。我们正在构建的负载测试器基本上是对一个端点发起大量的GET请求，并测量响应时间。由于单个物理机器能打开的网络连接数量有限，这是分布式系统的一个完美用例。在这种情况下，所需的网络请求数量均匀分布在集群中的每个节点上。
+
+\subsection{Blitzy概述-负载测试器}
+
+在我们开始学习分布式和实现Blitzy之前，让我们简单了解一下它能做什么。Blitzy是一个命令行程序。这是一个在毫无防备的情况下释放Blitzy的示例：
+\begin{code}{}  \begin{minted}[linenos]{elixir}
+    % ./blitzy -n 100 http://www.bieberfever.com
+    [info]  Pummeling http://www.bieberfever.com with 100 requests
+  \end{minted}
+\end{code}
+
+在这里，我们创建了100个工作进程，它们将对`www.bieberfever.com`发起HTTPGET请求，并测量响应时间以及计算成功请求的数量。
+在幕后，Blitzy创建了一个集群，并在集群中的节点上分配了工作进程。在上面的示例中，100个工作进程被分配到四个节点上。
+因此，每个节点上运行着25个工作进程：
+
+\begin{figure}[!ht]
+    \centering
+    \includegraphics[width=0.8\linewidth]{8_1.png}
+    \caption{请求数量被分配到集群中可用的节点上}
+    \label{fig:8_1}
+\end{figure}
+
+
+一旦每个节点上的所有工作进程都完成了，结果将被发送到主节点。
+
+\begin{figure}[!ht]
+    \centering
+    \includegraphics[width=0.8\linewidth]{8_2.png}
+    \caption{一旦一个节点收到所有其工作进程的结果，该节点将向主节点报告}
+    \label{fig:8_2}
+\end{figure}
+
+主节点将汇总并报告结果：
+
+\begin{code}{}  \begin{minted}[linenos]{elixir}
+Total workers    : 1000
+Successful reqs  : 1000
+Failed res       : 0 
+Average (msecs)  : 3103.478963 
+Longest (msecs)  : 5883.235
+Shortest (msecs) : 25.061
+\end{minted}
+\end{code}
+
+当我计划编写一个分布式应用程序时，我总是先从非分布式版本开始，以保持事情稍微简单一些。一旦你完成了非分布式部分的工作，你可以开始添加分布式层。直接跳入构建一个从一开始就考虑分布式的应用程序通常会出错。
+
+这就是我们在本章中开发Blitzy时采取的方法。实际上，我们将从基础开始：
+
+\begin{enumerate}
+\def\labelenumi{\arabic{enumi}.}
+
+\item  构建非并发版本
+\item  构建并发版本
+\item  构建可以在两个虚拟机实例上运行的分布式版本
+\item  构建可以在连接到网络的两台不同机器上运行的分布式版本
+\end{enumerate}
+
+\subsection{开始混乱吧！}
+
+给项目起个好名字：
+
+\texttt{\% mix new blitzy}让我们引入一些依赖项，如果我们有预知未来的能力，我们会知道要在\texttt{mix.exs} 中包括这些依赖：
+
+\begin{code}{为 Blitzy 设置依赖项（mix.exs）}
+
+\begin{minted}[linenos]{elixir}
+defmodule Blitzy.Mixfile do
+  use Mix.Project
+
+  def project do
+    [app: :blitzy, version: "0.0.1", elixir: "~> 1.1-rc1", deps: deps]
+  end
+
+  def application do
+    [
+      mod: {Blitzy, []},
+      # 3
+      applications: [:logger, :httpoison, :timex]
+    ]
+  end
+
+  defp deps do
+    [
+      # 1
+      {:httpoison, "~> 0.9.0"},
+      # 2
+      {:timex, "~> 3.0"},
+      {:tzdata, "~> 0.1.8", override: true}
+    ]
+  end
+end
+
+# 1 HTTPoison 是一个 HTTP 客户端
+# 2 Timex 是一个日期/时间库
+# 3 添加必要的应用程序
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+
+
+如果你想知道\texttt{\{:tzdata, "~> 0.1.8", override: true\}}是什么意思：之所以需要这样设置是因为新版本的\texttt{tzdata} 不适用于 escripts。Escripts将在本章后面解释。
+最后，不要忘记在\texttt{application/0} 中添加正确的条目。
+
+
+\begin{note}{始终阅读 README！}
+  除非我阅读了库的相应 README 中给出的安装说明，否则我不会知道在\texttt{application/0}中包括正确的条目。
+  如果不这样做，通常会导致令人困惑的错误。
+\end{note}
+
+
+\subsection{实现工作进程}
+
+我们从工作进程开始。工作进程获取网页并计算请求所用的时间。创建
+\texttt{lib/blitzy/worker.ex}。
+
+\begin{code}{实现工作进程（lib/blitzy/worker.ex）}
+
+\begin{minted}[linenos]{elixir}
+defmodule Blitzy.Worker do
+  use Timex
+  require Logger
+
+  def start(url) do
+    {timestamp, response} = Duration.measure(fn -> HTTPoison.get(url) end)
+    handle_response({Duration.to_milliseconds(timestamp), response})
+  end
+
+  defp handle_response({msecs, {:ok, %HTTPoison.Response{status_code: code}}})
+       when code >= 200 and code <= 304 do
+    Logger.info("worker [#{node}-#{inspect(self)}] completed in #{msecs} msecs")
+    {:ok, msecs}
+  end
+
+  defp handle_response({_msecs, {:error, reason}}) do
+    Logger.info("worker [#{node}-#{inspect(self)}] error due to #{inspect(reason)}")
+    {:error, reason}
+  end
+
+  defp handle_response({_msecs, _}) do
+    Logger.info("worker [#{node}-#{inspect(self)}] errored out")
+    {:error, :unknown}
+  end
+end
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+start 函数接受一个 \texttt{url} 和一个可选的
+\texttt{func}。\texttt{func}
+是一个用于发出 HTTP
+请求的函数。通过这种方式指定一个可选函数，我们可以自由地用另一个 HTTP
+客户端替换实现，比如 \emph{HTTPotion}。
+
+例如，我们可以选择使用 HTTPotion 的
+\texttt{HTTPotion.get/1} 来代替，就像这样：
+
+\texttt{Blitzy.Worker.start("http://www.bieberfever.com", \&HTTPotion.get/1)}
+
+然后在 \texttt{Time.measure/1} 的主体内调用 HTTP
+请求函数。请注意稍微不同的语法：\texttt{func.(url)}
+而不是
+\texttt{func(url)}。这里的点很重要，因为我们需要告诉
+Elixir \texttt{func}
+指向另一个函数，而不是那个函数本身。
+
+\texttt{Time.measure/1} 是
+\texttt{Timex}
+中的一个方便的函数，用于测量函数完成所需的时间。一旦该函数完成，\texttt{Time.measure/1}
+就会返回一个包含所用时间和该函数返回值的元组。请注意，所有测量都以毫秒为单位。
+
+从 \texttt{Time.measure/1} 返回的元组然后传递给
+\texttt{handle\_response/1}。在这里，
+
+我们期望我们传入 \texttt{start/2}
+的任何函数都给我们返回一个包含以下格式之一的元组：
+
+\begin{enumerate}
+	\item \mintinline{elixir}|{:ok, \%\{status_code: code\}}|
+  \item \mintinline{elixir}|{:error, reason}|
+\end{enumerate}
+
+除了获得成功响应外，我们还检查状态代码是否在 200 到 304
+的状态代码之间。如果我们遇到错误响应，我们返回一个标记为
+\texttt{:error}
+的元组以及错误原因。最后，我们处理最后一个情况，即处理所有其他情况。
+
+\subsection{运行工作进程}
+
+让我们尝试运行工作进程：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex(1) > Blitzy.Worker.start("http://www.bieberfever.com")
+{:ok, 2458.665}
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+太棒了！访问 Justin Bieber的粉丝网站大约需要2.4秒。
+注意，这也是你等待返回结果所需的时间。那么我们如何同时执行比如说，\emph{一千个}并发请求呢？
+使用\texttt{spawn}/\texttt{spawn\_link}！
+
+虽然这可以工作，但我们也需要一种方法来聚合工作进程的返回结果，例如计算所有成功请求的平均所用时间。
+我们可以将调用进程作为参数传递给\texttt{Blitzy.Worker.start}函数，并在结果可用时向调用进程发送消息。
+反过来，调用进程必须等待来自一千个工作进程的消息。
+
+以下是我们可能如何实现这一点的快速草图。我们引入一个
+\texttt{Blitzy.Caller} 模块：
+
+\begin{code}{从工作进程聚合结果的草图}
+
+\begin{minted}[linenos]{elixir}
+defmodule Blitzy.Caller do
+  def start(n_workers, url) do
+    me = self
+
+    1..n_workers
+    |> Enum.map(fn _ -> spawn(fn -> Blitzy.Worker.start(url, me) end) end)
+    |> Enum.map(fn _ ->
+      receive do
+        x -> x
+      end
+    end)
+  end
+end
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+调用模块接收两个参数。第一个是要创建的工作进程数量，然后是要进行负载测试的
+URL。上面的代码可能不太直观，所以让我们一点一点地解释它。
+
+我们首先在 \texttt{me}中保存对调用进程的引用。
+为什么？那是因为如果我们在\texttt{spawn} 中使用 \texttt{self}而不是 \texttt{me}，
+那么 \texttt{self}将指的是新生成的进程，而\emph{不是}调用进程！不信请看：
+
+\begin{code}{}\begin{minted}[linenos]{elixir}
+iex(1) > self
+# PID<0.159.0>
+
+iex(2) > spawn(fn -> IO.inspect(self) end)
+# PID<0.162.0>
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+接下来，我们生成 \texttt{n\_workers}数量的工作进程。
+
+\begin{code}{}\begin{minted}[linenos]{elixir}
+1..n_workers
+|> Enum.map(fn _ -> spawn(fn -> Blitzy.Worker.start(url, me) end) end)
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+上述结果是一个工作进程 PID 的列表。我们希望 PID将结果发送给调用进程（在下一节中将更多介绍），因此我们等待相同数量的消息：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+worker_pids
+|> Enum.map(fn _ ->
+  receive do
+    x -> x
+  end
+end)
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+我们只需要对 \texttt{Blitzy.Worker.start/1}做一点小修改：
+
+\begin{code}{修改工作进程，以便它可以将其结果发送给调用进程 (lib/worker.ex)}
+
+\begin{minted}[linenos]{elixir}
+defmodule Blitzy.Worker do
+  # 1
+  def start(url, caller, func \\ &HTTPoison.get/1) do
+    {timestamp, response} = Duration.measure(fn -> func.(url) end)
+
+    caller
+    |> send({self,
+     handle_response(
+       # 2
+       {Duration.to_milliseconds(timestamp), response}
+     )})
+  end
+end
+
+# 1: 添加一个调用者参数
+# 2: 无论何时计算出结果，都将结果发送给调用进程
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+上述修改使得 \texttt{Blitzy.Worker}
+进程能够将其结果发送给调用进程。
+
+如果这听起来有些混乱，让你有点头痛，那你并不孤单。虽然说实话这并不\emph{那么}难，同时启动一堆任务并等待每个生成的工作进程的结果不应该太难，尤其是因为这是一个常见的用例。幸运的是，这时候\emph{任务}就派上用场了。
+
+\section{任务简介}
+
+任务是 Elixir中执行单一计算的抽象。
+这种计算通常简单且自包含，不需要与其他进程进行通信/协调。
+为了更好地理解任务如何简化上述场景。
+
+我们可以通过调用 \texttt{Task.async/1}创建一个异步任务：
+
+\begin{code}{}\begin{minted}[linenos]{elixir}
+iex > task = Task.async(fn -> Blitzy.Worker.start("http://www.bieberfever.com") end)
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+我们得到的是一个 \texttt{Task} 结构体：
+
+\begin{code}{}\begin{minted}[linenos]{elixir}
+%Task{pid: #PID<0.154.0>, ref: #Reference<0.0.3.67>}
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+此时，任务正在后台异步执行。为了从任务中获取值，我们需要调用
+\texttt{Task.await/1}：
+
+\begin{code}{创建十个任务，每个任务运行一个 Blitzy 工作进程}
+
+\begin{minted}[linenos]{elixir}
+iex > Task.await(task)
+{:ok, 3362.655}
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+如果任务仍在计算中会发生什么呢？调用者进程将被阻塞，直到任务完成。让我们试一试：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex > worker_fun = fn -> Blitzy.Worker.start("http://www.bieberfever.com") end
+# Function<20.54118792/0 in :erl_eval.expr/5>
+iex > tasks = 1..10 |> Enum.map(fn _ -> Task.async(worker_fun) end)
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+返回结果是十个 \texttt{Task} 结构体的列表
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+[%Task{pid: #PID<0.184.0>, ref: #Reference<0.0.3.1071>},
+ %Task{pid: #PID<0.185.0>, ref: #Reference<0.0.3.1072>},
+ %Task{pid: #PID<0.186.0>, ref: #Reference<0.0.3.1073>},
+ %Task{pid: #PID<0.187.0>, ref: #Reference<0.0.3.1074>},
+ %Task{pid: #PID<0.188.0>, ref: #Reference<0.0.3.1075>},
+ %Task{pid: #PID<0.189.0>, ref: #Reference<0.0.3.1076>},
+ %Task{pid: #PID<0.190.0>, ref: #Reference<0.0.3.1077>},
+ %Task{pid: #PID<0.191.0>, ref: #Reference<0.0.3.1078>},
+ %Task{pid: #PID<0.192.0>, ref: #Reference<0.0.3.1079>},
+ %Task{pid: #PID<0.193.0>, ref: #Reference<0.0.3.1080>}]
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+现在有十个异步工作进程访问该网站。为了获取结果：
+
+\begin{code}{}\begin{minted}[linenos]{elixir}
+iex > result = tasks |> Enum.map(&Task.await(&1))
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+根据您的网络连接情况，Shell进程可能会被阻塞一段时间，之后您会得到类似以下的结果：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+[
+  ok: 95.023,
+  ok: 159.591,
+  ok: 190.345,
+  ok: 126.191,
+  ok: 125.554,
+  ok: 109.059,
+  ok: 139.883,
+  ok: 125.009,
+  ok: 101.94,
+  ok: 124.955
+]
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+这不是很棒吗？我们不仅可以创建异步进程来创建我们的工作进程，而且我们还有一种简单的方法来收集它们的结果。
+
+请系好安全带，因为接下来会更精彩！不需要经历传递调用者的 pid和设置接收块的麻烦。
+有了任务，这一切都会被很好地处理。
+
+在 \texttt{lib/blitzy.ex} 中，创建一个\texttt{run/2} 函数来创建和等待工作任务：
+
+
+\begin{code}{一个方便的函数，用于在任务中运行 Blitzy工作进程（lib/blitzy.ex）}
+
+\begin{minted}[linenos]{elixir}
+defmodule Blitzy do
+  def run(n_workers, url) when n_workers > 0 do
+    worker_fun = fn -> Blitzy.Worker.start(url) end
+
+    1..n_workers
+    |> Enum.map(fn _ -> Task.async(worker_fun) end)
+    |> Enum.map(&Task.await(&1))
+  end
+end
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+您现在可以简单地调用 \texttt{Blitzy.run/2}
+并以列表形式获取结果：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex > Blitzy.run(10, "http://www.bieberfever.com")
+
+[
+  ok: 71.408,
+  ok: 69.315,
+  ok: 72.661,
+  ok: 67.062,
+  ok: 74.63,
+  ok: 65.557,
+  ok: 201.591,
+  ok: 78.879,
+  ok: 115.75,
+  ok: 66.681
+]
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+但有一个小问题。观察当我们将工人数量增加到\emph{一千}时会发生什么：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex > Blitzy.run(1000, "http://www.bieberfever.com")
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+这会导致：
+
+\begin{code}{当任务超时时出现的错误消息}
+
+\begin{minted}[linenos]{elixir}
+(exit) exited in: Task.await(%Task{pid: #PID<0.231.0>, ref: #Reference<0.0.3.1201>}, 5000)
+** (EXIT) time out
+(elixir) lib/task.ex:274: Task.await/2
+(elixir) lib/enum.ex:1043: anonymous fn/3 in Enum.map/2
+(elixir) lib/enum.ex:1385: Enum."-reduce/3-lists^foldl/2-0-"/3
+(elixir) lib/enum.ex:1043: Enum.map/2
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+问题在于 \texttt{Task.await/2}
+默认在\emph{五}秒后超时。我们可以通过给
+\texttt{Task.await/2} 提供
+\texttt{:infinity} 作为超时值来轻松解决这个问题：
+
+\begin{code}{让任务永远等待 (lib/blitzy.ex)}
+
+\begin{minted}[linenos]{elixir}
+defmodule Blitzy do
+  def run(n_workers, url) when n_workers > 0 do
+    worker_fun = fn -> Blitzy.Worker.start(url) end
+
+    1..n_workers
+    |> Enum.map(fn _ -> Task.async(worker_fun) end)
+    # 1
+    |> Enum.map(&Task.await(&1, :infinity))
+  end
+end
+
+# 1: 让 Task.await/2 永远等待。
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+
+在这种情况下指定无限不是问题，因为如果服务器响应时间过长，HTTP
+客户端将超时，因此我们愿意将此决定委托给 HTTP 客户端，而不是任务。
+
+最后，我们需要计算平均耗时。在 \texttt{lib/blitzy.ex}中，\texttt{parse\_results/1}负责计算一些简单的统计数据，并将结果格式化为人类友好的格式：
+
+\begin{code}{计算工作器的简单统计信息 (lib/blitzy.ex)}
+
+\begin{minted}[linenos]{elixir}
+defmodule Blitzy do
+  # ...
+
+  defp parse_results(results) do
+    {successes, _failures} =
+      Results
+      # 1
+      |> Enum.partition(fn x ->
+        case x do
+          {:ok, _} -> true
+          _ -> false
+        end
+      end)
+
+    total_workers = Enum.count(results)
+    total_success = Enum.count(successes)
+    total_failure = total_workers - total_success
+
+    data = successes |> Enum.map(fn {:ok, time} -> time end)
+    average_time = average(data)
+    longest_time = Enum.max(data)
+    shortest_time = Enum.min(data)
+
+    IO.puts("""
+    总工作器数    : #{total_workers}
+    成功请求数  : #{total_success}
+    失败响应数  : #{total_failure}
+    平均时长 (毫秒) : #{average_time}
+    最长时长 (毫秒) : #{longest_time}
+    最短时长 (毫秒) : #{shortest_time}
+    """)
+  end
+
+  defp average(list) do
+    sum = Enum.sum(list)
+
+    if sum > 0 do
+      sum / Enum.count(list)
+    else
+      0
+    end
+  end
+end
+
+# 1 Enum.partition/2
+\end{minted}
+\label{lst:compute_simple_statistics}
+\end{code}
+
+这部分最有趣的是使用 \texttt{Enum.partition/2}函数。
+这个函数接收一个集合和一个谓词函数，并且结果是两个集合。第一个集合包含所有应用谓词函数后返回真值的元素。第二个集合包含被拒绝的元素。在我们的案例中，由于成功的请求看起来像\mintinline{elixir}|{:ok, _}|，而不成功的请求看起来像\mintinline{elixir}|{:error, _}|，我们可以在\mintinline{elixir}|{:ok, _}| 上进行模式匹配。
+
+\section{接下来到分布式！}
+
+我们稍后会再回到 Blitzy。让我们学习如何在 Elixir 中构建一个集群！Erlang
+虚拟机的一个杀手级特性是分布式。也就是说，有多个 Erlang
+运行时互相通信的能力。当然，你可能也可以在其他语言和平台上做到这一点，但大多数会让你对计算机和人类整体失去信心。
+
+\subsection{位置透明性}
+
+Elixir/Erlang集群中的进程是位置透明的。
+这意味着在单个节点上的进程之间发送消息和在不同节点的进程之间发送消息一样容易，只要你知道接收进程的进程ID。
+
+\begin{figure}[!ht]
+    \centering
+    \includegraphics[width=0.8\linewidth]{8_3.png}
+    \caption{位置透明性意味着向同一节点上的进程发送消息和向远程节点上的进程发送消息基本没有区别}
+    \label{fig:8_3}
+\end{figure}
+
+
+
+这使得跨节点的进程通信变得非常容易，因为从开发者的角度来看，基本上没有区别。
+
+
+\subsection{一个 Elixir 节点}
+
+一个节点是运行着 Erlang
+虚拟机并被赋予特定名称的系统。名称被表示为一个原子，例如
+\texttt{:justin@bieber.com}，很像一个电子邮件地址。名称有两种形式，\emph{短}
+和 \emph{长}。使用短名称假设所有节点都位于同一 IP
+域中。通常，这更容易设置，并且将是我们在本章中坚持使用的。
+
+ \subsection{ 创建集群}
+
+创建集群的第一步是启动一个分布式模式的 Erlang
+系统，为此，您必须给它一个名称。在一个新的终端窗口中，启动
+\texttt{iex}，但这次给它一个短名称
+(\texttt{--sname NAME}):
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+$ iex --sname barry
+iex(barry@imac)>
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+注意你的 \texttt{iex}
+提示现在有了短名称和本地机器的主机名。要获取本地机器的节点名称，调用
+\texttt{Kernel.node/0} 就可以了:
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex(barry@imac)> node
+:barry@imac
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+或者，\texttt{Node.self/0} 给你相同的结果，但我更喜欢
+\texttt{node}
+因为它更短。现在，在两个其他独立的终端窗口中，重复这个过程，但给它们每一个不同的名称:
+
+启动第二个节点:
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+$ iex --sname robin
+iex(robin@imac)>
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+接着是第三个:
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+$ iex --sname maurice
+iex(maurice@imac)>
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+此时，节点仍处于隔离状态 - 它们不知道彼此的存在。
+
+节点必须有唯一的名称！
+
+如果您启动了一个已经被注册的名称的节点，虚拟机将会出现问题。由此可知，您不能混合使用长名称和短名称。
+
+~
+
+\subsection{连接节点}
+
+转到 \texttt{barry} 节点，并使用\texttt{Node.connect/1} 连接到\texttt{robin}:
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex(barry@imac)> Node.connect(:robin@imac)
+true
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+\texttt{Node.connect/1} 如果连接成功则返回true。要列出所有 \texttt{barry} 连接的节点，使用\texttt{Node.list/0}:
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex(barry@imac)> Node.list
+[:robin@imac]
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+注意 \texttt{Node.list/1}不会列出当前节点，只列出它连接的节点。
+现在，转到\texttt{robin} 节点，再次运行\texttt{Node.list/0}:
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex(robin@imac)> Node.list
+[:barry@imac]
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+这里没有惊喜。连接 \texttt{barry} 到\texttt{robin} 意味着建立了双向连接。
+现在从\texttt{robin}，让我们连接到\texttt{maurice}:
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex(robin@imac)> Node.connect(:maurice@imac)
+true
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+现在，让我们检查 \texttt{robin} 连接的节点:
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex(robin@imac)> Node.list
+[:barry@imac, :maurice@imac]
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+让我们回到 \texttt{barry}。我们没有在\texttt{barry} 上显式运行\texttt{Node.connect(:maurice@imac)}。所以我们应该看到什么呢?
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex(barry@imac)> Node.list
+[:robin@imac, :maurice@imac]
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+\subsection{节点连接是传递性的}
+
+太棒了！节点连接是 \emph{传递性的}。这意味着尽管我们没有必要显式地将\texttt{barry} 连接到\texttt{maurice}，
+但这是因为\texttt{barry} 连接到\texttt{robin}，而 \texttt{robin}连接到 \texttt{maurice}，
+因此 \texttt{barry}连接到了\texttt{maurice}。
+
+\begin{figure}[!ht]
+    \centering
+    \includegraphics[width=0.8\linewidth]{8_4.png}
+    \caption{将一个节点连接到另一个节点会自动将新节点链接到集群中的所有其他节点}
+    \label{fig:8_4}
+\end{figure}
+
+
+断开节点会将其从集群的\emph{所有}成员中断开。如果调用了\texttt{Node.disconnect/1}或由于网络中断导致节点死亡，节点可能会断开连接。
+
+\section{远程执行函数}
+现在我们知道了如何将节点连接到集群中，让我们做一些有用的事情。首先，关闭所有之前打开的\texttt{iex}会话，因为我们将重新从头开始创建我们的集群。
+
+不过在此之前，转到 \texttt{lib/worker.ex} 并对\texttt{start/3} 函数进行一行添加：
+
+\begin{code}{向 \texttt{lib/worker.ex}中添加一行以打印当前节点}
+\begin{minted}[linenos]{elixir}
+defmodule Blitzy.Worker do
+  def start(url, func \\ &HTTPoison.get/1) do 
+      IO.puts "Running on #node-#{node}"             #1 
+      {timestamp, response} = Duration.measure(fn -> func.(url) end) 
+      handle_response({Duration. Duration.to_milliseconds (timestamp), response}) 
+    end
+    # ... same as beforeend
+
+#1 打印当前节点
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+这次，转到 \texttt{blitzy}的目录，在\emph{三个}不同的终端中操作。在第一个终端：
+
+\texttt{\% iex --sname barry -S mix}
+
+在第二个终端：
+
+\texttt{\% iex --sname robin -S mix}
+
+最后，在第三个终端：
+
+\texttt{\% iex --sname maurice -S mix}
+
+接下来，我们将所有节点连接在一起。例如，从\texttt{maurice} 节点：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex(maurice@imac)> Node.connect(:barry@imac)
+true
+
+iex(maurice@imac)> Node.connect(:robin@imac)
+true
+
+iex(maurice@imac)> Node.list
+[:barry@imac, :robin@imac]
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+现在有趣的部分来了。我们现在将在所有三个节点上运行\texttt{Blitzy.Worker.start}。
+稍微思考一下，因为这太棒了。
+请注意，接下来的命令将在\texttt{maurice}节点上执行。
+虽然你可以在任何节点上执行，但某些输出会有所不同。
+
+首先，我们将集群中的每个成员（包括当前节点）的所有引用存储到\texttt{cluster} 中：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex(maurice@imac)>  cluster = [node | Node.list]
+[:maurice@imac, :barry@imac, :robin@imac]
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+然后，我们可以使用 \texttt{:rpc.multicall}函数在所有三个节点上运行\texttt{Blitzy.Worker.start/1}：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+  iex(maurice@imac)> :rpc.multicall(cluster, Blitzy.Worker, :start, ["http://www.bieberfever.com"]) 
+  "Running on #node-maurice@imac" 
+  "Running on #node-robin@imac"
+  "Running on #node-barry@imac"
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+返回结果看起来是这样的：
+
+\mintinline{elixir}|{[ok: 2166.561, ok: 3175.567, ok: 2959.726], []}|
+
+事实上，你甚至不需要指定 \texttt{cluster}：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+  iex(maurice@imac)> :rpc.multicall(Blitzy.Worker, :start, ["http://www.bieberfever.com"]) 
+  "Running on #node-maurice@imac" 
+  "Running on #node-barry@imac" 
+  "Running on #node-robin@imac"
+  {[ok: 1858.212, ok: 737.108, ok: 1038.707], []}
+  此材料可能受版权保护。
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+注意，返回值是一个包含两个元素的元组。所有成功的调用都被捕获在第一个元素中，而第二个参数给出了不良（无法到达）节点的列表。
+
+那么，我们如何在多个节点上执行多个\texttt{Worker}，同时能够聚合结果并在之后展示它们呢？
+我们在实现\texttt{Blitzy.run/2} 时使用\texttt{Task.async/1} 和\texttt{Task.await/2} 解决了这个问题。
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex(maurice@imac)> :rpc.multicall(Blitzy, :run, [5, "http://www.bieberfever.com"], 
+:infinity)
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+返回结果是三个列表，每个列表有五个元素。
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+{[
+   [ok: 92.76, ok: 71.179, ok: 138.284, ok: 78.159, ok: 139.742],
+   [ok: 120.909, ok: 75.775, ok: 146.515, ok: 86.986, ok: 129.492],
+   [ok: 147.873, ok: 171.228, ok: 114.596, ok: 120.745, ok: 130.114]
+ ], []}
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+Erlang 的RPC文档中还有许多有趣的函数，例如\texttt{:rpc.pmap/3} 和\texttt{parallel\_eval/1}，我鼓励你稍后试验它们。
+现在，我们将注意力重新转回到Blitzy。
+
+\section{使 Blitzy 分布式}
+
+我们将创建一个简单的配置文件，主节点将使用它来连接到集群的节点。
+打开\texttt{config/config.exs} 并填写以下内容：
+
+\begin{code}{整个集群的配置文件（config/config.exs）}
+
+\begin{minted}[linenos]{elixir}
+use Mix.Config
+
+config :blitzy, master_node: :"a@127.0.0.1"
+
+config :blitzy, slave_nodes: [:"b@127.0.0.1", :"c@127.0.0.1", :"d@127.0.0.1"]
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+\subsection{创建命令行界面}
+
+Blitzy是一个命令行程序。因此，让我们为它构建一个命令行界面。创建一个名为\texttt{cli.ex} 的新文件并将其放在\texttt{lib} 中。
+我们希望这样调用\texttt{Blitzy}：
+
+\texttt{./blitzy -n [requests] [url]}
+
+\texttt{[requests]}是一个指定要创建\texttt{Worker}数量的整数，而 \texttt{[url]}是一个指定端点的字符串。
+如果用户未能提供正确的格式，则还应显示帮助消息。在Elixir 中，很容易将这些连接起来。
+
+首先，转到 \texttt{mix.exs} 并修改\texttt{project/0}。创建一个名为\texttt{escript} 的条目，并填写如下：
+
+\begin{code}{将 escript添加到项目函数中以确定命令行程序的主入口点（mix.exs）}
+\begin{minted}[linenos]{elixir}
+defmodule Blitzy.Mixfile do
+  def project do
+    [
+      app: :blitzy,
+      version: "0.0.1",
+      elixir: "~> 1.1",
+      # 1
+      escript: [main_module: Blitzy.CLI],
+      deps: deps
+    ]
+  end
+end
+\end{minted}
+\label{lst:escript}
+\end{code}
+
+这指向 \texttt{mix} 当我们调用\texttt{mix escript.build} 生成\texttt{Blitzy} 命令行程序时的正确模块。
+由\texttt{main\_module} 指向的模块应该有一个\texttt{main/1} 函数。
+让我们提供它和一些其他函数：
+
+\subsection{使用 OptionParser 解析输入参数}
+
+\begin{code}{使用 OptionParser 处理输入参数 (lib/cli.ex)}
+
+\begin{minted}[linenos]{elixir}
+use Mix.Config
+defmodule Blitzy.CLI do
+  require Logger
+
+  def main(args) do
+    args
+    |> parse_args
+    |> process_options
+  end
+
+  defp parse_args(args) do
+    OptionParser.parse(args, aliases: [n: :requests],
+    strict: [requests: :integer])
+  end
+
+  defp process_options(options, nodes) do
+    case options do
+      {[requests: n], [url], []} ->
+        # 执行操作
+
+      _ ->
+        do_help
+    end
+  end
+end
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+大多数 Elixir的命令行程序都有相同的一般结构，即接收参数，解析它们，并处理它们。多亏了管道操作符，我们可以这样表示：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+args
+|> parse_args
+|> process_options
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+\texttt{args} 是一个参数的标记化列表。例如，给定
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+% ./blitzy -n 100 http://www.bieberfever.com
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+那么 \texttt{args} 是：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+["-n", "100", "http://www.bieberfever.com"]
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+这个列表然后被传递给 \texttt{parse\_args/1}，这是\texttt{OptionParser.parse/2}的一个简单封装。
+\texttt{OptionParser.parse/2}完成了大部分繁重的工作。
+
+它接受一个参数列表并返回解析后的值、剩余的参数和无效选项。让我们看看如何解读这个：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+OptionParser.parse(args,
+  aliases: [n: :requests],
+  strict: [requests: :integer]
+)
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+首先，我们将 \texttt{--requests} 别名为\texttt{n}。
+这是指定开关的简写方式。\texttt{OptionParser}期望所有开关都以 \texttt{--<switch>} 开始，单字符开关\texttt{-<switch>}应该适当地别名。
+例如，\texttt{OptionParser}将这样的命令视为无效：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex > OptionParser.parse(["-n", "100"])
+{[], [], [{"-n", "100"}]}
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+你可以告诉它是无效的，因为是第三个列表被填充了。
+另一方面，如果你为开关添加了双破折号（即长格式），那么\texttt{OptionParser} 就会接受它：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex(d@127.0.0.1)12> OptionParser.parse(["--n", "100"])
+{[n: "100"], [], []}
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+我们还可以对开关值的类型进行断言。\texttt{-n}的值必须是整数。
+因此，我们在上面的代码中的\texttt{strict}选项中指定了这一点。
+请再次注意，我们使用的是开关的长名称。
+
+一旦我们完成了参数的解析，我们可以将结果交给\texttt{process\_options/1}。
+在这个函数中，我们利用了\texttt{OptionParser.parse/2}返回的是一个有三个元素的元组，每个元素都是一个列表。
+
+\begin{code}{通过模式匹配，我们可以轻松声明程序期望的参数格式 (lib/cli.ex)}
+
+\begin{minted}[linenos]{elixir}
+defp process_options(options) do
+  case options do
+    {[requests: n], [url], []} -> #1
+      # 稍后实现。
+    _ ->
+      do_help
+  end
+end
+
+#1 模式匹配我们期望的确切格式
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+我们还模式匹配了程序所期望的\emph{确切}格式。仔细审视一下模式：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+{[requests: n], [url], []}
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+你能指出我们对参数所声明的一些属性吗？这是我的：
+
+\begin{enumerate}
+\def\labelenumi{\arabic{enumi}.}
+\item  \texttt{--requests} 或 \texttt{-n}  包含一个也是整数的单一值。
+\item  还有一个 URL。
+\item  没有无效的参数。这是通过第三个元素中的空列表指定的。
+\end{enumerate}
+
+如果由于某种原因参数无效，那么我们希望调用 \texttt{do\_help}函数来呈现一个友好的信息：
+
+
+\begin{code}{当用户错误使用参数时添加一个简单的帮助函数 (lib/cli.ex)}
+
+\begin{minted}[linenos]{elixir}
+defp do_help do
+  IO.puts("""
+  使用方法:
+  blitzy -n [请求次数] [url]
+
+  选项:
+  -n, [--requests]      # 请求次数
+
+  示例:
+  ./blitzy -n 100 http://www.bieberfever.com
+  """)
+
+  System.halt(0)
+end
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+目前，当参数有效时不会发生任何事情。现在让我们填补缺失的部分。
+
+\subsection{连接到节点}
+
+我们之前在 \texttt{config/config.exs}中创建了一个配置，指定了主节点和从节点。
+我们如何从我们的应用程序中访问这个配置呢？非常简单：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+iex(1) > Application.get_env(:blitzy, :master_node)
+:"a@127.0.0.1"
+
+iex(2) > Application.get_env(:blitzy, :slave_nodes)
+[:"b@127.0.0.1", :"c@127.0.0.1", :"d@127.0.0.1"]
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+注意，节点 \texttt{b}、\texttt{c} 和\texttt{d}需要在分布式模式下启动并使用匹配的名称，
+然后才能执行命令\texttt{(./blitzy -n 100 http://www.bieberfever.com)}。
+我们需要修改\texttt{lib/cli.ex} 中的\texttt{main/1} 函数：
+
+\begin{code}{修改 main 以从配置文件中读取 (lib/cli.ex)}
+
+\begin{minted}[linenos]{elixir}
+defmodule Blitzy.CLI do
+  def main(args) do
+    # 1
+    Application.get_env(:blitzy, :master_node)
+    # 1
+    |> Node.start()
+
+    # 2
+    Application.get_env(:blitzy, :slave_nodes)
+    # 2
+    |> Enum.each(&Node.connect(&1))
+
+    args
+    |> parse_args
+    # 3
+    |> process_options([node | Node.list()])
+  end
+end
+
+# 1 在分布式模式下启动主节点
+# 2 连接到从节点
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+
+我们从 \texttt{config/config.exs}中读取配置。
+首先，我们在分布式模式下启动主节点，并将其命名为\texttt{a@127.0.0.1}。
+接下来，我们连接到从节点。然后，我们将整个集群的列表传递给\texttt{process\_options/2}，现在它接受两个参数（之前只接受一个）。
+接下来，让我们修改它：
+
+\begin{code}{这个函数现在接受集群中的节点列表，并将其传递给 do\_requests}
+
+\begin{minted}[linenos]{elixir}
+defmodule Blitzy.CLI do
+  # ...
+
+  defp process_options(options, nodes) do
+    case options do
+      {[requests: n], [url], []} ->
+        # 1
+        do_requests(n, url, nodes)
+
+      _ ->
+        do_help
+    end
+  end
+end
+
+# 1 节点列表被传递给 do\_requests/3
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+节点列表被传递到 \texttt{do\_requests/3}
+函数，这是主要的工作函数：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+defmodule Blitzy.CLI do
+  # ...
+
+  defp do_requests(n_requests, url, nodes) do
+    Logger.info("Pummelling #{url} with #{n_requests} requests")
+
+    # 1
+    total_nodes = Enum.count(nodes)
+    # 1
+    req_per_node = div(n_requests, total_nodes)
+
+    nodes
+    |> Enum.flat_map(fn node ->
+      1..req_per_node
+      |> Enum.map(fn _ ->
+        Task.Supervisor.async({Blitzy.TasksSupervisor, node}, Blitzy.Worker, :start, [url])
+      end)
+    end)
+    |> Enum.map(&Task.await(&1, :infinity))
+    |> parse_results
+  end
+end
+
+# 1 计算每个节点要生成的工作器数量
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+以上代码相对简洁，但不用担心！我们很快就会再次讨论它。现在，让我们暂时绕道去看看任务\emph{监督器}。
+
+\subsection{使用 Tasks.Supervisor 监督任务}
+
+我们不希望一个 \texttt{Task}
+的崩溃导致整个应用程序崩溃。这在我们可能生成\emph{成千上万}个（甚至更多！）\texttt{Task}
+时尤其重要。到现在为止，你应该知道答案是将
+\texttt{Task} 置于监督之下。
+
+幸运的是，Elixir 配备了一个专门的 \texttt{Task}
+监督器，恰当地称为
+\texttt{Task.Supervisor}。这个监督器是一个
+\texttt{:simple\_one\_for\_one} 监督器，
+
+其中所有被监督的 \texttt{Task}
+都是临时的（在崩溃时不会重启）。为了使用
+\texttt{Task.Supervisor}，我们需要创建
+\texttt{lib/supervisor.ex}：
+
+\begin{figure}[!ht]
+    \centering
+    \includegraphics[width=0.8\linewidth]{8_5.png}
+    \caption{Blitzy 的监督树}
+    \label{fig:8_5}
+\end{figure}
+
+ 
+
+\begin{code}{设置顶级监督树 (lib/supervisor.ex)}
+
+\begin{minted}[linenos]{elixir}
+defmodule Blitzy.Supervisor do
+  use Supervisor
+
+  def start_link(:ok) do
+    Supervisor.start_link(__MODULE__, :ok)
+  end
+
+  def init(:ok) do
+    children = [
+      supervisor(Task.Supervisor, [[name: Blitzy.TasksSupervisor]])
+    ]
+
+    supervise(children, strategy: :one_for_one)
+  end
+end
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+我们创建了一个顶级监督器（\texttt{Blitzy.Supervisor}），它监督一个我们命名为
+\texttt{Blitzy.TasksSupervisor} 的
+\texttt{Task.Supervisor}。现在，我们需要在应用程序启动时启动
+\texttt{Blitzy.Supervisor}。这是
+\texttt{lib/blitzy.ex}：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+defmodule Blitzy do
+  use Application
+
+  def start(_type, _args) do
+    Blitzy.Supervisor.start_link(:ok)
+  end
+end
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+\texttt{start/2} 函数只是启动顶级监督器，然后启动其余的监督树。
+
+\subsection{使用任务监督器}
+
+让我们仔细看看这段代码，因为它展示了我们如何利用\texttt{任务监督器(Task.Supervisor)}在所有节点上分配工作负载，
+以及如何使用\texttt{任务等待(Task.await/2)} 来检索结果：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+nodes
+|> Enum.flat_map(fn node ->
+  1..req_per_node
+  |> Enum.map(fn _ ->
+    Task.Supervisor.async({Blitzy.TasksSupervisor, node}, Blitzy.Worker, :start, [url])
+  end)
+end)
+|> Enum.map(&Task.await(&1, :infinity))
+|> parse_results
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+这可能是最复杂的一行：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+Task.Supervisor.async({Blitzy.TasksSupervisor, node}, Blitzy.Worker, :start, [url])
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+这与启动一个 \texttt{任务(Task)} 类似：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+Task.async(Blitzy.Worker, :start, ["http://www.bieberfever.com"])
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+然而，有几个关键的不同。首先，从\texttt{任务监督器(Task.Supervisor)}启动任务意味着它受到监督！
+其次，仔细看看第一个参数。我们传入了一个包含模块名\emph{和}节点的元组。
+换句话说，我们在远程告诉每个节点的\texttt{Blitzy.TasksSupervisor} 生成工作器。这太棒了！
+\texttt{任务监督器异步(Task.Supervisor.async/3)}返回的与 \texttt{任务异步(Task.async/3)} 相同，一个\texttt{任务(Task)} 结构：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+%Task{pid: #PID<0.154.0>, ref: #Reference<0.0.3.67>}
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+因此，我们可以调用 \texttt{任务等待(Task.await/2)}
+来等待每个工作器返回的结果。现在我们已经解决了难点，我们可以更好地理解这段代码的目的。给定一个节点，我们生成
+\texttt{req\_per\_node} 数量的工作器：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+1..req_per_node
+|> Enum.map(fn _ ->
+  Task.Supervisor.async({Blitzy.TasksSupervisor, node}, Blitzy.Worker, :start, [url])
+end)
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+为了在所有节点上执行此操作，我们必须以某种方式\emph{映射}通过所有节点。
+我们\emph{可以}使用\texttt{Enum.map/2}：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+nodes
+|> Enum.map(fn node ->
+  1..req_per_node
+  |> Enum.map(fn _ ->
+    Task.Supervisor.async({Blitzy.TasksSupervisor, node}, Blitzy.Worker, :start, [url])
+  end)
+end)
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+然而，这个结果将是一个嵌套列表的 \texttt{任务(Task)}结构，因为内部 \texttt{Enum.map/2}的结果是任务结构的列表。
+相反，我们想要的是\texttt{Enum.flat\_map/2}，它看起来像这样，它接受任意嵌套的列表，扁平化列表然后对扁平列表中的每个元素应用函数。
+下图说明了这一点：
+
+\begin{figure}[!ht]
+    \centering
+    \includegraphics[width=0.8\linewidth]{8_7.png}
+    \caption{使用 flatmap 扁平化任务结构列表，然后将每个任务结构映射到Blitzy 任务监督器}
+    \label{fig:8_7}
+\end{figure}
+
+图\ref{fig:8_7}这里，我们使用 flatmap来扁平化任务结构的列表，然后将每个任务结构映射到 Blitzy 任务监督器
+
+这是代码：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+nodes
+|> Enum.flat_map(fn node ->
+  1..req_per_node
+  |> Enum.map(fn _ ->
+    Task.Supervisor.async({Blitzy.TasksSupervisor, node}, Blitzy.Worker, :start, [url])
+  end)
+end)
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+由于现在我们有了一个\emph{扁平化}的任务结构列表，我们可以交给\texttt{任务等待(Task.await/2)}：
+
+\begin{code}{}
+\begin{minted}[linenos]{elixir}
+nodes
+|> Enum.flat_map(fn node ->
+  nil
+  # 一个任务结构的列表
+end)
+
+# 由于 flat map，一个任务结构的列表
+|> Enum.map(&Task.await(&1, :infinity))
+|> parse_results
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+\texttt{任务等待(Task.await/2)}
+
+本质上完成了从所有节点收集结果到主节点的工作。完成后，我们像之前一样将列表交给\texttt{解析结果(parse\_results/1)}。
+
+\subsection{创建二进制文件与 \texttt{mix escript.build}}
+
+差不多了！最后一步是生成二进制文件。在项目目录中，运行以下\texttt{mix} 命令：
+
+\begin{code}{构建可执行文件}
+
+\begin{minted}[linenos]{elixir}
+% mix escript.build
+编译 lib/supervisor.ex
+编译 lib/cli.ex
+生成 blitzy 应用
+用 MIX_ENV=dev 生成 escript blitzy
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+最后一行告诉你 \texttt{blitzy}
+二进制文件已经创建。如果你列出目录中的所有文件，你会找到
+\texttt{blitzy}：
+
+\begin{code}{运行 mix escript.build 后生成 blitzy 二进制文件}
+\begin{minted}[linenos]{elixir}
+% ls
+README.md     blitzy        deps          lib           mix.lock      test
+_build        config        erl_crash.dump mix.exs       priv
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+\subsection{运行 Blitzy！}
+
+终于到了！在我们启动二进制文件之前，我们需要先启动\emph{三个}其他节点。记住，这些是从节点。在三个不同的终端里，启动从节点：
+
+\begin{code}{运行 mix escript.build 后生成 blitzy 二进制文件}
+  \begin{minted}[linenos]{elixir}
+% iex --name b@127.0.0.1 -S mix
+% iex --name c@127.0.0.1 -S mix
+% iex --name d@127.0.0.1 -S mix
+\end{minted}
+% \label{lst:id}
+\end{code}
+
+现在，我们可以运行 \texttt{blitzy}
+了！在另一个终端中，运行 \texttt{blitzy} 命令：
+
+\texttt{\% ./blitzy -n 10000 http://www.bieberfever.com}你会看到所有四个终端都显示出类似的信息：
+
+\texttt{10:34:17.702 [info]  worker [b@127.0.0.1-\#PID<0.2584.0>] completed in 58585.746 msecs}。
+下面是在我的机器上的一个例子：
+
+\begin{figure}[!ht]
+    \centering
+    \includegraphics[width=0.8\linewidth]{8_7a.png}
+    \caption{在我的机器上运行 Blitzy}
+    \label{fig:8_7a}
+\end{figure}
+
+
+最后，当一切完成后，结果将会在你启动 \texttt{./blitzy}
+命令的终端上报告：
+
+\texttt{总工作者数    : 10000}
+\texttt{成功请求    : 9795}
+\texttt{失败响应     : 205}
+\texttt{平均时间 (毫秒) : 31670.991222460456}
+\texttt{最长时间 (毫秒) : 58585.746``最短时间 (毫秒) : 3141.722}
+
+\section{总结}
+
+在这章里，我们得到了关于分布式 Elixir能提供什么的广泛概览。
+下面是快速回顾：
+
+\begin{itemize}
+\item  Elixir 和 Erlang VM 提供的用于构建分布式系统的内置函数
+\item  实现一个展示负载均衡的分布式应用
+\item  学习如何使用任务进行短暂计算
+\item  实现一个命令行应用程序
+\end{itemize}
+
+在下一章中，我们将继续探索分布式的冒险。我们将探讨分布式和容错是如何相辅相成的。

@@ -1,0 +1,155 @@
+\documentclass[oneside]{ctexbook}
+% \usepackage{lmodern}
+\usepackage[margin=2cm]{geometry}
+\usepackage[dvipsnames]{xcolor}
+\usepackage{caption}
+
+% Create Example enviornment
+\usepackage{fontspec}
+\usepackage[most]{tcolorbox}
+\tcbuselibrary{skins,breakable}
+\usepackage{xparse}
+\usepackage[colorlinks,linkcolor=blue]{hyperref}
+\usepackage{xurl}
+\usepackage{cleveref}
+
+% 设置example环境
+\newtcolorbox[auto counter, number within=chapter, 
+    crefname={example}{examples},
+    Crefname={Example}{Examples},
+    number freestyle={\noexpand\thechapter.\noexpand\arabic{\tcbcounter}}]
+    {example}[2][]{%
+    enhanced,
+    breakable,
+    fonttitle=\bfseries,
+    colback=NavyBlue!5!white,
+    % opacityback=0,
+    % opacityfill=0,
+    colbacktitle=OliveGreen!80!white,
+    title=示例~\thetcbcounter: #2,    
+    #1
+}
+
+% 设置代码环境
+\newtcolorbox[auto counter, number within=chapter, 
+    crefname={code}{codes},
+    Crefname={Code}{Codes},
+    number freestyle={\noexpand\thechapter.\noexpand\arabic{\tcbcounter}}]
+    {code}[2][]{%
+    enhanced,
+    breakable,
+    fonttitle=\bfseries,
+    boxrule=0pt,
+    frame hidden,
+    colback=black!100!white,
+    opacityback=0,
+    colbacktitle=NavyBlue!80!white,
+    title=\textbf{代码~\thetcbcounter} #2,    
+    #1
+}
+
+% 设置Note环境
+\newtcolorbox[auto counter, number within=chapter, 
+    crefname={note}{notes},
+    Crefname={Note}{Notes},
+    number freestyle={\noexpand\thechapter.\noexpand\arabic{\tcbcounter}}]
+    {note}[2][]{%
+    enhanced,
+    breakable,
+    fonttitle=\bfseries,
+    boxrule=1pt,
+    % frame hidden,
+    colback=BrickRed!5!white,
+    colbacktitle=BrickRed!80!white,
+    title=\textbf{#2},    
+    #1
+}
+
+% Minted Code Highlight
+\usepackage{listings}
+\usepackage[newfloat]{minted}
+\setminted{
+    autogobble=true,
+    obeytabs=true,
+    tabsize=4,
+    breaklines, % 自动断行
+    frame=leftline, % 加边框
+    framesep=2pt, % 边框与代码的间距
+    fontsize=\small, % 字体大小
+    linenos, % 显示行号
+    % bgcolor=black
+}
+\usemintedstyle{tango}
+
+% \DeclareCaptionFormat{listing}{%
+% \colorbox{NavyBlue}{\textcolor{white}{\parbox{\dimexpr\textwidth-2\fboxsep-2\fboxrule\relax}{\textbf{#1}#2 #3}}}
+% } 
+% % \DeclareCaptionFormat{listing}{\colorbox{NavyBlue}{\textcolor{white}{\textbf{#1 #2 #3}}}}
+% \newenvironment{code}{\captionsetup{type=listing}}{}
+% \SetupFloatingEnvironment{listing}{name=\textbf{代码}}
+% \captionsetup[listing]{format=listing,singlelinecheck=false, margin=0pt, font={sc,color=white}}
+
+\usepackage{longtable}
+\usepackage{booktabs}
+\usepackage{array} 
+
+\usepackage{graphicx}
+\graphicspath{{images/}}
+
+\usepackage{pagenote}
+%% 在每章末尾将注释列为一节
+\renewcommand*{\notedivision}{\section*{\notesname}}
+\renewcommand*{\pagenotesubhead}[1]{}
+%%%%%%%%%%%%% 章末注样式设置（可选）不需要的话注释掉
+% 每一个注释编号前添加章节号，形如：3-14
+% \renewcommand{\thepagenote}{\thechapter-\arabic{pagenote}}
+% 正文中注释编号样式调整：上标，小号字，方括号
+\renewcommand\notenumintext[1]{\textsuperscript{\footnotesize[#1]}}
+% 章节末尾注释编号样式调整：方括号，正常大小
+\renewcommand\notenuminnotes[1]{{[#1] }}
+% 更换注释一节标题为中文
+\renewcommand{\notesname}{注释}
+%%%%%%%%%%%%% End customisation
+%% ！必须要有下面这行！
+\makepagenote
+
+
+\begin{document}
+
+\title{Elixir与OTP指北}
+\author{Benjamin}
+\maketitle
+
+\phantomsection
+\tableofcontents
+\addcontentsline{toc}{chapter}{目录}
+
+\input{contents/welcome}
+\input{contents/about}
+\input{contents/preface}
+
+% Part 1
+\input{contents/part1/part1}
+\input{contents/part1/01-introduction}
+\input{contents/part1/02-a-whirlwind-tour}
+\input{contents/part1/03-processes-101}
+\input{contents/part1/04-genserver}
+
+%Part 2
+\input{contents/part2/part2}
+\input{contents/part2/05-concurrent}
+\input{contents/part2/06-fault-tolerance}
+\input{contents/part2/07-worker-pool}
+\input{contents/part2/08-load-balancing}
+\input{contents/part2/09-distribution}
+
+%Part 3
+\input{contents/part3/part3}
+\input{contents/part3/10-dialyzer-type}
+\input{contents/part3/11-testing}
+
+\appendix
+\input{contents/appendix}
+\input{contents/acknowledgements}
+
+\end{document}
