@@ -1066,7 +1066,6 @@ end
 
 
 \begin{code}{当用户错误使用参数时添加一个简单的帮助函数 (lib/cli.ex)}
-
 \begin{minted}[linenos]{elixir}
 defp do_help do
   IO.puts("""
@@ -1212,10 +1211,8 @@ end
 \texttt{Task.Supervisor}。这个监督器是一个
 \texttt{:simple\_one\_for\_one} 监督器，
 
-其中所有被监督的 \texttt{Task}
-都是临时的（在崩溃时不会重启）。为了使用
-\texttt{Task.Supervisor}，我们需要创建
-\texttt{lib/supervisor.ex}：
+其中所有被监督的 \texttt{Task}都是临时的（在崩溃时不会重启）。
+为了使用\texttt{Task.Supervisor}，我们需要创建\texttt{lib/supervisor.ex}：
 
 \begin{figure}[!ht]
     \centering
